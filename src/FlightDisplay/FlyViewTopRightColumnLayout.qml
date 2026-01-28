@@ -20,6 +20,8 @@ import QGroundControl.FlightMap
 ColumnLayout {
     width: _rightPanelWidth
 
+    property bool showWidgets: true
+
     TerrainProgress {
         Layout.alignment:       Qt.AlignTop
         Layout.preferredWidth:  _rightPanelWidth
@@ -31,6 +33,7 @@ ColumnLayout {
     Loader {
         id:                 photoVideoControlLoader
         Layout.alignment:   Qt.AlignTop | Qt.AlignRight
+        visible:            showWidgets
         sourceComponent:    globals.activeVehicle && globals.activeVehicle.cameraManager ? photoVideoControlComponent : undefined
 
         property real rightEdgeCenterInset: visible ? parent.width - x : 0

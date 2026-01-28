@@ -21,6 +21,12 @@
 #include "VehicleLinkManager.h"
 #include "LinkInterface.h"
 #include "QmlObjectListModel.h"
+#include "UDPLink.h"
+#include "TCPLink.h"
+
+#include <QtNetwork/QNetworkAccessManager>
+#include <QtNetwork/QNetworkRequest>
+#include <QtNetwork/QNetworkReply>
 #ifdef Q_OS_IOS
 #include "MobileScreenMgr.h"
 #elif defined(Q_OS_ANDROID)
@@ -40,6 +46,7 @@ MultiVehicleManager::MultiVehicleManager(QObject *parent)
     , _gcsHeartbeatTimer(new QTimer(this))
     , _vehicles(new QmlObjectListModel(this))
     , _selectedVehicles(new QmlObjectListModel(this))
+    , _networkManager(new QNetworkAccessManager(this))
 {
     qCDebug(MultiVehicleManagerLog) << this;
 
@@ -383,9 +390,127 @@ Vehicle *MultiVehicleManager::getVehicleById(int vehicleId) const
 void MultiVehicleManager::_setActiveVehicle(Vehicle *vehicle)
 {
     if (vehicle != _activeVehicle) {
+        // Stop stream on previous vehicle if any
+        if (_previousActiveVehicleId >= 0) {
+            qCDebug(MultiVehicleManagerLog) << "Stopping stream on previous vehicle:" << _previousActiveVehicleId;
+            _sendStreamCommand(_previousActiveVehicleId, "stop");
+        }
+
         _activeVehicle = vehicle;
+
+        // Start stream on new vehicle if any
+        if (_activeVehicle) {
+            _previousActiveVehicleId = _activeVehicle->id();
+            qCDebug(MultiVehicleManagerLog) << "Starting stream on new vehicle:" << _previousActiveVehicleId;
+
+            // Delay para asegurar que VehicleLinkManager esté inicializado
+            QTimer::singleShot(500, this, [this, vehicleId = _previousActiveVehicleId]() {
+                _sendStreamCommand(vehicleId, "start");
+            });
+        } else {
+            _previousActiveVehicleId = -1;
+        }
+
         emit activeVehicleChanged(vehicle);
     }
+}
+
+void MultiVehicleManager::_sendStreamCommand(int vehicleId, const QString &command)
+{
+    Vehicle *vehicle = getVehicleById(vehicleId);
+    if (!vehicle) {
+        qCWarning(MultiVehicleManagerLog) << "Vehicle not found:" << vehicleId;
+        return;
+    }
+
+    // Get vehicle's link IP
+    const QString vehicleLinkIp = _getVehicleLinkIp(vehicle);
+    if (vehicleLinkIp.isEmpty()) {
+        qCWarning(MultiVehicleManagerLog) << "Could not get link IP for vehicle:" << vehicleId;
+        return;
+    }
+
+    // Extract subnet (first 3 octets) from vehicle IP
+    const QStringList ipParts = vehicleLinkIp.split('.');
+    if (ipParts.size() < 3) {
+        qCWarning(MultiVehicleManagerLog) << "Invalid IP format:" << vehicleLinkIp;
+        return;
+    }
+
+    // Build onboard computer IP: 192.168.X.163
+    const QString onboardIp = QString("%1.%2.%3.%4")
+                                  .arg(ipParts[0])
+                                  .arg(ipParts[1])
+                                  .arg(ipParts[2])
+                                  .arg(kOnboardComputerLastOctet);
+
+    // Build HTTP URL: http://192.168.X.163/stream
+    const QString url = QString("http://%1:8000/stream").arg(onboardIp);
+
+    qCDebug(MultiVehicleManagerLog) << "Sending stream command to:" << url;
+
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // JSON body for POST request
+    const QString postDataStr = QString("{ \"mensaje\":\"%1\"}").arg(command);
+    const QByteArray postData = postDataStr.toUtf8();
+
+    QNetworkReply *reply = _networkManager->post(request, postData);
+
+    // Handle response asynchronously
+    connect(reply, &QNetworkReply::finished, this, [reply, vehicleId, command, url]() {
+        if (reply->error() == QNetworkReply::NoError) {
+            qCDebug(MultiVehicleManagerLog) << "Stream command successful for vehicle:" << vehicleId
+                                            << "command:" << command;
+        } else {
+            qCWarning(MultiVehicleManagerLog) << "Failed to send stream command to:" << url
+                                              << "error:" << reply->errorString();
+        }
+        reply->deleteLater();
+    });
+}
+
+QString MultiVehicleManager::_getVehicleLinkIp(Vehicle *vehicle) const
+{
+    if (!vehicle) {
+        return QString();
+    }
+
+    VehicleLinkManager *linkManager = vehicle->vehicleLinkManager();
+    if (!linkManager) {
+        return QString();
+    }
+
+    SharedLinkInterfacePtr primaryLink = linkManager->primaryLink().lock();
+    if (!primaryLink) {
+        return QString();
+    }
+
+    SharedLinkConfigurationPtr config = primaryLink->linkConfiguration();
+    if (!config) {
+        return QString();
+    }
+
+    QString ipAddress;
+
+    // Try to get IP based on link type
+    if (config->type() == LinkConfiguration::TypeUdp) {
+        const UDPConfiguration *udpConfig = qobject_cast<const UDPConfiguration*>(config.get());
+        if (udpConfig) {
+            const QList<std::shared_ptr<UDPClient>> targets = udpConfig->targetHosts();
+            if (!targets.isEmpty()) {
+                ipAddress = targets.first()->address.toString();
+            }
+        }
+    } else if (config->type() == LinkConfiguration::TypeTcp) {
+        const TCPConfiguration *tcpConfig = qobject_cast<const TCPConfiguration*>(config.get());
+        if (tcpConfig) {
+            ipAddress = tcpConfig->host();
+        }
+    }
+
+    return ipAddress;
 }
 
 void MultiVehicleManager::_setActiveVehicleAvailable(bool activeVehicleAvailable)

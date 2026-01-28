@@ -63,6 +63,8 @@ Item {
     property real   _fullItemZorder:    0
     property real   _pipItemZorder:     QGroundControl.zOrderWidgets
 
+    property bool   _showWidgets:       true
+
     function _calcCenterViewPort() {
         var newToolInset = Qt.rect(0, 0, width, height)
         toolstrip.adjustToolInset(newToolInset)
@@ -81,6 +83,8 @@ Item {
     FlyViewToolBar {
         id:         toolbar
         visible:    !QGroundControl.videoManager.fullScreen
+        swapViews:  function() { _pipView._swapPip() }
+        toggleWidgets: function() { _showWidgets = !_showWidgets }
     }
 
     Item {
@@ -114,12 +118,11 @@ Item {
             item1IsFullSettingsKey: "MainFlyWindowIsMap"
             item1:                  mapControl
             item2:                  QGroundControl.videoManager.hasVideo ? videoControl : null
-            show:                   QGroundControl.videoManager.hasVideo && !QGroundControl.videoManager.fullScreen &&
-                                        (videoControl.pipState.state === videoControl.pipState.pipState || mapControl.pipState.state === mapControl.pipState.pipState)
+            show:                   false  // Hidden - view swapping now controlled by toolbar button only
             z:                      QGroundControl.zOrderWidgets
 
-            property real leftEdgeBottomInset: visible ? width + anchors.margins : 0
-            property real bottomEdgeLeftInset: visible ? height + anchors.margins : 0
+            property real leftEdgeBottomInset: 0  // Always 0 since PiP is hidden
+            property real bottomEdgeLeftInset: 0  // Always 0 since PiP is hidden
         }
 
         FlyViewWidgetLayer {
@@ -134,6 +137,7 @@ Item {
             visible:                !QGroundControl.videoManager.fullScreen
             utmspActTrigger:        utmspSendActTrigger
             isViewer3DOpen:         viewer3DWindow.isOpen
+            showWidgets:            _showWidgets
         }
 
         FlyViewCustomLayer {

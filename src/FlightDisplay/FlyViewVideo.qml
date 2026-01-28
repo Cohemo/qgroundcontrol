@@ -23,6 +23,11 @@ Item {
     property int    _track_rec_x:       0
     property int    _track_rec_y:       0
 
+    // UDP Touch Event Sender
+    TouchEventUdpSender {
+        id: touchEventSender
+    }
+
     PipState {
         id:         videoPipState
         pipView:    _root.pipView
@@ -113,10 +118,24 @@ Item {
         property var trackingROI:   null
         property var trackingStatus: trackingStatusComponent.createObject(flyViewVideoMouseArea, {})
 
-        onClicked:       onScreenGimbalController.clickControl()
-        onDoubleClicked: QGroundControl.videoManager.fullScreen = !QGroundControl.videoManager.fullScreen
+        onClicked: (mouse) => {
+            // Enviar evento de clic por UDP
+            touchEventSender.sendClicked(mouse.x, mouse.y)
+
+            onScreenGimbalController.clickControl()
+        }
+        onDoubleClicked: (mouse) => {
+            // Enviar evento de doble clic por UDP
+            touchEventSender.sendDoubleClicked(mouse.x, mouse.y)
+
+            //Modificado
+            //QGroundControl.videoManager.fullScreen = !QGroundControl.videoManager.fullScreen
+        }
 
         onPressed:(mouse) => {
+            // Enviar evento táctil por UDP
+            touchEventSender.sendPressed(mouse.x, mouse.y)
+
             onScreenGimbalController.pressControl()
 
             _track_rec_x = mouse.x
@@ -133,6 +152,9 @@ Item {
             }
         }
         onPositionChanged: (mouse) => {
+            // Enviar evento de movimiento por UDP
+            touchEventSender.sendPositionChanged(mouse.x, mouse.y)
+
             //on move, update the width of rectangle
             if (trackingROI !== null) {
                 if (mouse.x < trackingROI.x) {
@@ -150,8 +172,11 @@ Item {
             }
         }
         onReleased: (mouse) => {
+            // Enviar evento de liberación por UDP
+            touchEventSender.sendReleased(mouse.x, mouse.y)
+
             onScreenGimbalController.releaseControl()
-            
+
             //if there is already a selection, delete it
             if (trackingROI !== null) {
                 trackingROI.destroy();

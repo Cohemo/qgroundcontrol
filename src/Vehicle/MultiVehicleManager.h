@@ -21,6 +21,7 @@ class LinkInterface;
 class Vehicle;
 class QmlObjectListModel;
 class QTimer;
+class QNetworkAccessManager;
 
 Q_DECLARE_LOGGING_CATEGORY(MultiVehicleManagerLog)
 
@@ -82,6 +83,10 @@ private:
     bool _getParameterReadyVehicleAvailable() const { return _parameterReadyVehicleAvailable; }
     void _setParameterReadyVehicleAvailable(bool parametersReady);
 
+    // UGV Video Stream Control
+    void _sendStreamCommand(int vehicleId, const QString &command);
+    QString _getVehicleLinkIp(Vehicle *vehicle) const;
+
     QTimer *_gcsHeartbeatTimer = nullptr;           ///< Timer to emit heartbeats
     QmlObjectListModel *_vehicles = nullptr;
     QmlObjectListModel *_selectedVehicles = nullptr;
@@ -91,6 +96,9 @@ private:
     Vehicle *_activeVehicle = nullptr;              ///< Currently active vehicle from a ui perspective
     QList<int> _ignoreVehicleIds;                   ///< List of vehicle id for which we ignore further communication
     bool _initialized = false;
+    int _previousActiveVehicleId = -1;              ///< Previous active vehicle ID for stream control
+    QNetworkAccessManager *_networkManager = nullptr; ///< For HTTP requests to UGV onboard computers
 
     static constexpr int kGCSHeartbeatRateMSecs = 1000;  ///< Heartbeat rate
+    static constexpr int kOnboardComputerLastOctet = 163; ///< Last octet of onboard computer IP (192.168.X.163)
 };

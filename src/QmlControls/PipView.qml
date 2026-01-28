@@ -111,10 +111,10 @@ Item {
     MouseArea {
         id:             pipMouseArea
         anchors.fill:   parent
-        enabled:        _isExpanded
+        enabled:        false  // Disabled - view swapping now controlled by toolbar button only
         preventStealing: true
-        hoverEnabled:   true
-        onClicked:      _swapPip()
+        hoverEnabled:   false
+        // onClicked removed - view swapping is now only through toolbar button
     }
 
     // MouseArea to drag in order to resize the PiP area

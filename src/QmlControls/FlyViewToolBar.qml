@@ -27,7 +27,9 @@ Rectangle {
 
     property var    _activeVehicle:     QGroundControl.multiVehicleManager.activeVehicle
     property bool   _communicationLost: _activeVehicle ? _activeVehicle.vehicleLinkManager.communicationLost : false
-    property color  _mainStatusBGColor: qgcPal.brandingPurple
+    property color  _mainStatusBGColor: "blue"
+    property var    swapViews:          function() {}
+    property var    toggleWidgets:      function() {}
 
     function dropMainStatusIndicatorTool() {
         mainStatusIndicator.dropMainStatusIndicator();
@@ -47,7 +49,7 @@ Rectangle {
 
     Rectangle {
         anchors.fill: viewButtonRow
-        
+
         gradient: Gradient {
             orientation: Gradient.Horizontal
             GradientStop { position: 0;                                     color: _mainStatusBGColor }
@@ -78,10 +80,11 @@ Rectangle {
 
         QGCButton {
             id:                 disconnectButton
-            text:               qsTr("Disconnect")
+            text:               qsTr("Desconectar")
             onClicked:          _activeVehicle.closeVehicle()
             visible:            _activeVehicle && _communicationLost
         }
+
     }
 
     QGCFlickable {
@@ -92,21 +95,47 @@ Rectangle {
         anchors.bottomMargin:   1
         anchors.top:            parent.top
         anchors.bottom:         parent.bottom
-        anchors.right:          parent.right
+        anchors.right:          rightButtonRow.left
         contentWidth:           toolIndicators.width
         flickableDirection:     Flickable.HorizontalFlick
 
         FlyViewToolBarIndicators { id: toolIndicators }
     }
 
-    //-------------------------------------------------------------------------
-    //-- Branding Logo
-    Image {
+    // Botones después de los indicadores
+    RowLayout {
+        id:                     rightButtonRow
+        anchors.bottomMargin:   1
+        anchors.top:            parent.top
+        anchors.bottom:         parent.bottom
         anchors.right:          parent.right
+        anchors.rightMargin:    ScreenTools.defaultFontPixelWidth / 2
+        spacing:                ScreenTools.defaultFontPixelWidth / 2
+
+        QGCButton {
+            id:                 swapViewButton
+            text:               qsTr("GPS/Interfaz")
+            onClicked:          swapViews()
+            visible:            QGroundControl.videoManager.hasVideo
+        }
+
+        QGCButton {
+            id:                 toggleWidgetsButton
+            text:               qsTr("Info")
+            onClicked:          toggleWidgets()
+            visible:            true
+        }
+    }
+
+    //-------------------------------------------------------------------------
+    //-- Branding Logo (Hidden)
+    Image {
+        anchors.right:          rightButtonRow.left
         anchors.top:            parent.top
         anchors.bottom:         parent.bottom
         anchors.margins:        ScreenTools.defaultFontPixelHeight * 0.66
-        visible:                _activeVehicle && !_communicationLost && x > (toolsFlickable.x + toolsFlickable.contentWidth + ScreenTools.defaultFontPixelWidth)
+        anchors.rightMargin:    ScreenTools.defaultFontPixelWidth
+        visible:                false // Logo PX4/fabricante deshabilitado
         fillMode:               Image.PreserveAspectFit
         source:                 _outdoorPalette ? _brandImageOutdoor : _brandImageIndoor
         mipmap:                 true

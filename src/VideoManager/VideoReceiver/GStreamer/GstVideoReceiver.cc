@@ -104,6 +104,14 @@ void GstVideoReceiver::start(uint32_t timeout)
             break;
         }
 
+        // Para decoderQueue
+        g_object_set(decoderQueue,
+                     "max-size-buffers", 2,      // Solo 2 buffers máximo
+                     "max-size-bytes", 0,        // Sin límite de bytes
+                     "max-size-time", 0,         // Sin límite de tiempo
+                     "leaky", 2,                 // GST_QUEUE_LEAK_DOWNSTREAM
+                     nullptr);
+
         _decoderValve = gst_element_factory_make("valve", nullptr);
         if (!_decoderValve)  {
             qCCritical(GstVideoReceiverLog) << "gst_element_factory_make('valve') failed";

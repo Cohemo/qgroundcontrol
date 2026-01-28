@@ -14,6 +14,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         MAVLinkProtocol.h
         TCPLink.cc
         TCPLink.h
+        TouchEventUdpSender.cc
+        TouchEventUdpSender.h
         UDPLink.cc
         UDPLink.h
 )

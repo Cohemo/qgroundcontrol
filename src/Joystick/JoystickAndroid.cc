@@ -251,6 +251,17 @@ bool JoystickAndroid::init()
     ret[i++] = QJniObject::getStaticField<jint>("android/view/KeyEvent", "KEYCODE_BUTTON_Y");
     ret[i++] = QJniObject::getStaticField<jint>("android/view/KeyEvent", "KEYCODE_BUTTON_Z");
 
+    // Agregar teclas de función F1-F9 para tablets rugerizadas
+    ret[i++] = QJniObject::getStaticField<jint>("android/view/KeyEvent", "KEYCODE_F1");
+    ret[i++] = QJniObject::getStaticField<jint>("android/view/KeyEvent", "KEYCODE_F2");
+    ret[i++] = QJniObject::getStaticField<jint>("android/view/KeyEvent", "KEYCODE_F3");
+    ret[i++] = QJniObject::getStaticField<jint>("android/view/KeyEvent", "KEYCODE_F4");
+    ret[i++] = QJniObject::getStaticField<jint>("android/view/KeyEvent", "KEYCODE_F5");
+    ret[i++] = QJniObject::getStaticField<jint>("android/view/KeyEvent", "KEYCODE_F6");
+    ret[i++] = QJniObject::getStaticField<jint>("android/view/KeyEvent", "KEYCODE_F7");
+    ret[i++] = QJniObject::getStaticField<jint>("android/view/KeyEvent", "KEYCODE_F8");
+    ret[i++] = QJniObject::getStaticField<jint>("android/view/KeyEvent", "KEYCODE_F9");
+
     ACTION_DOWN = QJniObject::getStaticField<jint>("android/view/KeyEvent", "ACTION_DOWN");
     ACTION_UP = QJniObject::getStaticField<jint>("android/view/KeyEvent", "ACTION_UP");
     AXIS_HAT_X = QJniObject::getStaticField<jint>("android/view/MotionEvent", "AXIS_HAT_X");

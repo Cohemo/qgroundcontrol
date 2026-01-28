@@ -34,6 +34,7 @@ Item {
     property var    totalToolInsets:        _totalToolInsets
     property var    mapControl
     property bool   isViewer3DOpen:         false
+    property bool   showWidgets:            true
 
     property var    _activeVehicle:         QGroundControl.multiVehicleManager.activeVehicle
     property var    _planMasterController:  globals.planMasterControllerFlyView
@@ -52,15 +53,17 @@ Item {
 
     property bool utmspActTrigger
 
+//Modificado
+
     QGCToolInsets {
         id:                     _totalToolInsets
-        leftEdgeTopInset:       toolStrip.leftEdgeTopInset
-        leftEdgeCenterInset:    toolStrip.leftEdgeCenterInset
+        leftEdgeTopInset:       toolStrip.visible ? toolStrip.leftEdgeTopInset : 0
+        leftEdgeCenterInset:    toolStrip.visible ? toolStrip.leftEdgeCenterInset : 0
         leftEdgeBottomInset:    virtualJoystickMultiTouch.visible ? virtualJoystickMultiTouch.leftEdgeBottomInset : parentToolInsets.leftEdgeBottomInset
         rightEdgeTopInset:      topRightPanel.rightEdgeTopInset
         rightEdgeCenterInset:   topRightPanel.rightEdgeCenterInset
         rightEdgeBottomInset:   bottomRightRowLayout.rightEdgeBottomInset
-        topEdgeLeftInset:       toolStrip.topEdgeLeftInset
+        topEdgeLeftInset:       toolStrip.visible ? toolStrip.topEdgeLeftInset : 0
         topEdgeCenterInset:     mapScale.topEdgeCenterInset
         topEdgeRightInset:      topRightPanel.topEdgeRightInset
         bottomEdgeLeftInset:    virtualJoystickMultiTouch.visible ? virtualJoystickMultiTouch.bottomEdgeLeftInset : parentToolInsets.bottomEdgeLeftInset
@@ -75,6 +78,7 @@ Item {
         anchors.topMargin:      _layoutMargin
         anchors.rightMargin:    _layoutMargin
         maximumHeight:          parent.height - (bottomRightRowLayout.height + _margins * 5)
+        showWidgets:            _root.showWidgets
 
         property real topEdgeRightInset:    height + _layoutMargin
         property real rightEdgeTopInset:    width + _layoutMargin
@@ -89,6 +93,7 @@ Item {
         anchors.right:      parent.right
         spacing:            _layoutSpacing
         visible:           !topRightPanel.visible
+        showWidgets:        _root.showWidgets
 
         property real topEdgeRightInset:    childrenRect.height + _layoutMargin
         property real rightEdgeTopInset:    width + _layoutMargin
@@ -101,6 +106,8 @@ Item {
         anchors.bottom:     parent.bottom
         anchors.right:      parent.right
         spacing:            _layoutSpacing
+        showWidgets:        _root.showWidgets
+        _showSingleVehicleUI: _root._showSingleVehicleUI
 
         property real bottomEdgeRightInset:     height + _layoutMargin
         property real bottomEdgeCenterInset:    bottomEdgeRightInset
@@ -133,8 +140,8 @@ Item {
         visible:                    _virtualJoystickEnabled && !QGroundControl.videoManager.fullScreen && !(_activeVehicle ? _activeVehicle.usingHighLatencyLink : false)
         anchors.bottom:             parent.bottom
         anchors.bottomMargin:       bottomLoaderMargin
-        anchors.left:               parent.left   
-        anchors.leftMargin:         ( y > toolStrip.y + toolStrip.height ? toolStrip.width / 2 : toolStrip.width * 1.05 + toolStrip.x) 
+        anchors.left:               parent.left
+        anchors.leftMargin:         ( y > toolStrip.y + toolStrip.height ? toolStrip.width / 2 : toolStrip.width * 1.05 + toolStrip.x)
         source:                     "qrc:/qml/QGroundControl/FlightDisplay/VirtualJoystick.qml"
         active:                     _virtualJoystickEnabled && !(_activeVehicle ? _activeVehicle.usingHighLatencyLink : false)
 
@@ -143,7 +150,7 @@ Item {
         property bool leftHandedMode:          QGroundControl.settingsManager.appSettings.virtualJoystickLeftHandedMode.rawValue
         property bool _virtualJoystickEnabled: QGroundControl.settingsManager.appSettings.virtualJoystick.rawValue
         property real bottomEdgeRightInset:    parent.height-y
-        property var  _pipViewMargin:          _pipView.visible ? parentToolInsets.bottomEdgeLeftInset + ScreenTools.defaultFontPixelHeight * 2 : 
+        property var  _pipViewMargin:          _pipView.visible ? parentToolInsets.bottomEdgeLeftInset + ScreenTools.defaultFontPixelHeight * 2 :
                                                bottomRightRowLayout.height + ScreenTools.defaultFontPixelHeight * 1.5
 
         property var  bottomLoaderMargin:      _pipViewMargin >= parent.height / 2 ? parent.height / 2 : _pipViewMargin
@@ -160,7 +167,7 @@ Item {
         //Loader status logic
         onLoaded: {
             if (virtualJoystickMultiTouch.visible) {
-                virtualJoystickMultiTouch.item.calibration = true 
+                virtualJoystickMultiTouch.item.calibration = true
                 virtualJoystickMultiTouch.item.uiTotalWidth = rootWidth
                 virtualJoystickMultiTouch.item.uiRealX = itemX
             } else {
@@ -169,6 +176,10 @@ Item {
         }
     }
 
+
+// Modificado para quitar TakeOFF y Return
+
+///*
     FlyViewToolStrip {
         id:                     toolStrip
         anchors.leftMargin:     _toolsMargin + parentToolInsets.leftEdgeCenterInset
@@ -177,7 +188,7 @@ Item {
         anchors.top:            parent.top
         z:                      QGroundControl.zOrderWidgets
         maxHeight:              parent.height - y - parentToolInsets.bottomEdgeLeftInset - _toolsMargin
-        visible:                !QGroundControl.videoManager.fullScreen
+        visible:                !QGroundControl.videoManager.fullScreen && mapControl.pipState.state === mapControl.pipState.fullState
 
         onDisplayPreFlightChecklist: {
             if (!preFlightChecklistLoader.active) {
@@ -191,6 +202,7 @@ Item {
         property real leftEdgeCenterInset:  leftEdgeTopInset
     }
 
+//*/
     GripperMenu {
         id: gripperOptions
     }

@@ -4299,25 +4299,25 @@ Please place your vehicle in water, click the button, and wait. Note that the th
     </message>
     <message>
       <location filename="../src/QmlControls/AutotuneUI.qml" line="35"/>
-      <source>WARNING!        
+      <source>WARNING!
 
-The auto-tuning procedure should be executed with caution and requires the vehicle to fly stable enough before attempting the procedure!         
+The auto-tuning procedure should be executed with caution and requires the vehicle to fly stable enough before attempting the procedure!
 
-Before starting the auto-tuning process, make sure that:         
-1. You have read the auto-tuning guide and have followed the preliminary steps         
-2. The current control gains are good enough to stabilize the drone in presence of medium disturbances         
-3. You are ready to abort the auto-tuning sequence by moving the RC sticks, if anything unexpected happens.         
+Before starting the auto-tuning process, make sure that:
+1. You have read the auto-tuning guide and have followed the preliminary steps
+2. The current control gains are good enough to stabilize the drone in presence of medium disturbances
+3. You are ready to abort the auto-tuning sequence by moving the RC sticks, if anything unexpected happens.
 
 Click Ok to start the auto-tuning process.
 </source>
-      <translation type="unfinished">WARNING!        
+      <translation type="unfinished">WARNING!
 
-The auto-tuning procedure should be executed with caution and requires the vehicle to fly stable enough before attempting the procedure!         
+The auto-tuning procedure should be executed with caution and requires the vehicle to fly stable enough before attempting the procedure!
 
-Before starting the auto-tuning process, make sure that:         
-1. You have read the auto-tuning guide and have followed the preliminary steps         
-2. The current control gains are good enough to stabilize the drone in presence of medium disturbances         
-3. You are ready to abort the auto-tuning sequence by moving the RC sticks, if anything unexpected happens.         
+Before starting the auto-tuning process, make sure that:
+1. You have read the auto-tuning guide and have followed the preliminary steps
+2. The current control gains are good enough to stabilize the drone in presence of medium disturbances
+3. You are ready to abort the auto-tuning sequence by moving the RC sticks, if anything unexpected happens.
 
 Click Ok to start the auto-tuning process.
 </translation>
@@ -9568,27 +9568,27 @@ Click Ok to start the auto-tuning process.
     <message>
       <location filename="../src/QmlControls/MainStatusIndicator.qml" line="46"/>
       <source>Ready To Fly</source>
-      <translation type="unfinished">Ready To Fly</translation>
+      <translation type="unfinished">Listo para armar</translation>
     </message>
     <message>
       <location filename="../src/QmlControls/MainStatusIndicator.qml" line="47"/>
       <source>Not Ready</source>
-      <translation type="unfinished">Not Ready</translation>
+      <translation type="unfinished">No Listo</translation>
     </message>
     <message>
       <location filename="../src/QmlControls/MainStatusIndicator.qml" line="49"/>
       <source>Armed</source>
-      <translation type="unfinished">Armed</translation>
+      <translation type="unfinished">Armado</translation>
     </message>
     <message>
       <location filename="../src/QmlControls/MainStatusIndicator.qml" line="50"/>
       <source>Flying</source>
-      <translation type="unfinished">Flying</translation>
+      <translation type="unfinished">Activo</translation>
     </message>
     <message>
       <location filename="../src/QmlControls/MainStatusIndicator.qml" line="51"/>
       <source>Landing</source>
-      <translation type="unfinished">Landing</translation>
+      <translation type="unfinished">Llegando</translation>
     </message>
     <message>
       <location filename="../src/QmlControls/MainStatusIndicator.qml" line="153"/>
@@ -9618,12 +9618,12 @@ Click Ok to start the auto-tuning process.
     <message>
       <location filename="../src/QmlControls/MainStatusIndicator.qml" line="48"/>
       <source>Disconnected - Click to manually connect</source>
-      <translation type="unfinished">Disconnected - Click to manually connect</translation>
+      <translation type="unfinished">Desconectado - Haga clic para conectar manualmente</translation>
     </message>
     <message>
       <location filename="../src/QmlControls/MainStatusIndicator.qml" line="194"/>
       <source>Force Arm</source>
-      <translation type="unfinished">Force Arm</translation>
+      <translation type="unfinished">Forzar Armado</translation>
     </message>
     <message>
       <location filename="../src/QmlControls/MainStatusIndicator.qml" line="194"/>
@@ -9677,27 +9677,27 @@ Click Ok to start the auto-tuning process.
     <message>
       <location filename="../src/QmlControls/MainStatusIndicatorOfflinePage.qml" line="43"/>
       <source>Select Link to Connect</source>
-      <translation type="unfinished">Select Link to Connect</translation>
+      <translation type="unfinished">Seleccione UGV</translation>
     </message>
     <message>
       <location filename="../src/QmlControls/MainStatusIndicatorOfflinePage.qml" line="46"/>
       <source>No Links Configured</source>
-      <translation type="unfinished">No Links Configured</translation>
+      <translation type="unfinished">Enlace no configurado</translation>
     </message>
     <message>
       <location filename="../src/QmlControls/MainStatusIndicatorOfflinePage.qml" line="55"/>
       <source>Connected</source>
-      <translation type="unfinished">Connected</translation>
+      <translation type="unfinished">Conectado</translation>
     </message>
     <message>
       <location filename="../src/QmlControls/MainStatusIndicatorOfflinePage.qml" line="75"/>
       <source>Communication Links</source>
-      <translation type="unfinished">Communication Links</translation>
+      <translation type="unfinished">Enlaces de Comunicación</translation>
     </message>
     <message>
       <location filename="../src/QmlControls/MainStatusIndicatorOfflinePage.qml" line="76"/>
       <source>Configure</source>
-      <translation type="unfinished">Configure</translation>
+      <translation type="unfinished">Configurar</translation>
     </message>
     <message>
       <location filename="../src/QmlControls/MainStatusIndicatorOfflinePage.qml" line="79"/>
