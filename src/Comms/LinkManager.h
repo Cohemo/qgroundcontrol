@@ -126,6 +126,7 @@ signals:
     void isBluetoothAvailableChanged();
 
 private slots:
+    void _linkConnected();
     void _linkDisconnected();
     void _communicationError(const QString &title, const QString &error);
 

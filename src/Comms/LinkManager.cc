@@ -21,6 +21,10 @@
 #include "TCPLink.h"
 #include "UDPLink.h"
 
+#include <QtNetwork/QNetworkAccessManager>
+#include <QtNetwork/QNetworkRequest>
+#include <QtNetwork/QNetworkReply>
+
 #ifdef QGC_ENABLE_BLUETOOTH
 #include "BluetoothLink.h"
 #endif
@@ -162,6 +166,7 @@ bool LinkManager::createConnectedLink(SharedLinkConfigurationPtr &config)
     (void) connect(link.get(), &LinkInterface::communicationError, this, &LinkManager::_communicationError);
     (void) connect(link.get(), &LinkInterface::bytesReceived, MAVLinkProtocol::instance(), &MAVLinkProtocol::receiveBytes);
     (void) connect(link.get(), &LinkInterface::bytesSent, MAVLinkProtocol::instance(), &MAVLinkProtocol::logSentBytes);
+    (void) connect(link.get(), &LinkInterface::connected, this, &LinkManager::_linkConnected);
     (void) connect(link.get(), &LinkInterface::disconnected, this, &LinkManager::_linkDisconnected);
 
     MAVLinkProtocol::instance()->resetMetadataForLink(link.get());
@@ -214,6 +219,72 @@ void LinkManager::disconnectAll()
     }
 }
 
+void LinkManager::_linkConnected()
+{
+    LinkInterface* const link = qobject_cast<LinkInterface*>(sender());
+
+    if (!link || !containsLink(link)) {
+        return;
+    }
+
+    SharedLinkConfigurationPtr config = link->linkConfiguration();
+    if (!config) {
+        return;
+    }
+
+    QString ipAddress;
+
+    // Get IP based on link type
+    if (config->type() == LinkConfiguration::TypeUdp) {
+        const UDPConfiguration *udpConfig = qobject_cast<const UDPConfiguration*>(config.get());
+        if (udpConfig) {
+            const QList<std::shared_ptr<UDPClient>> targets = udpConfig->targetHosts();
+            if (!targets.isEmpty()) {
+                ipAddress = targets.first()->address.toString();
+            }
+        }
+    } else if (config->type() == LinkConfiguration::TypeTcp) {
+        const TCPConfiguration *tcpConfig = qobject_cast<const TCPConfiguration*>(config.get());
+        if (tcpConfig) {
+            ipAddress = tcpConfig->host();
+        }
+    }
+
+    if (ipAddress.isEmpty()) {
+        return;
+    }
+
+    // Extract subnet (first 3 octets) from link IP
+    const QStringList ipParts = ipAddress.split('.');
+    if (ipParts.size() != 4) {
+        return;
+    }
+
+    // Build communications manager IP: 192.168.X.163
+    const QString managerIp = QString("%1.%2.%3.163")
+                                  .arg(ipParts[0])
+                                  .arg(ipParts[1])
+                                  .arg(ipParts[2]);
+
+    // Build HTTP URL: http://192.168.X.163:8000/stream
+    const QString url = QString("http://%1:8000/stream").arg(managerIp);
+
+    QNetworkAccessManager *networkManager = new QNetworkAccessManager(this);
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // JSON body: {"mensaje":"start"}
+    const QByteArray postData = "{\"mensaje\":\"start\"}";
+
+    QNetworkReply *reply = networkManager->post(request, postData);
+
+    // Handle response
+    connect(reply, &QNetworkReply::finished, [reply, networkManager]() {
+        reply->deleteLater();
+        networkManager->deleteLater();
+    });
+}
+
 void LinkManager::_linkDisconnected()
 {
     LinkInterface* const link = qobject_cast<LinkInterface*>(sender());
@@ -222,9 +293,62 @@ void LinkManager::_linkDisconnected()
         return;
     }
 
+    // Send stop command to communications manager before disconnecting
+    SharedLinkConfigurationPtr config = link->linkConfiguration();
+    if (config) {
+        QString ipAddress;
+
+        // Get IP based on link type
+        if (config->type() == LinkConfiguration::TypeUdp) {
+            const UDPConfiguration *udpConfig = qobject_cast<const UDPConfiguration*>(config.get());
+            if (udpConfig) {
+                const QList<std::shared_ptr<UDPClient>> targets = udpConfig->targetHosts();
+                if (!targets.isEmpty()) {
+                    ipAddress = targets.first()->address.toString();
+                }
+            }
+        } else if (config->type() == LinkConfiguration::TypeTcp) {
+            const TCPConfiguration *tcpConfig = qobject_cast<const TCPConfiguration*>(config.get());
+            if (tcpConfig) {
+                ipAddress = tcpConfig->host();
+            }
+        }
+
+        if (!ipAddress.isEmpty()) {
+            // Extract subnet (first 3 octets) from link IP
+            const QStringList ipParts = ipAddress.split('.');
+            if (ipParts.size() == 4) {
+                // Build communications manager IP: 192.168.X.163
+                const QString managerIp = QString("%1.%2.%3.163")
+                                              .arg(ipParts[0])
+                                              .arg(ipParts[1])
+                                              .arg(ipParts[2]);
+
+                // Build HTTP URL: http://192.168.X.163:8000/stream
+                const QString url = QString("http://%1:8000/stream").arg(managerIp);
+
+                QNetworkAccessManager *networkManager = new QNetworkAccessManager(this);
+                QNetworkRequest request(url);
+                request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+                // JSON body: {"mensaje":"stop"}
+                const QByteArray postData = "{\"mensaje\":\"stop\"}";
+
+                QNetworkReply *reply = networkManager->post(request, postData);
+
+                // Handle response
+                connect(reply, &QNetworkReply::finished, [reply, networkManager]() {
+                    reply->deleteLater();
+                    networkManager->deleteLater();
+                });
+            }
+        }
+    }
+
     (void) disconnect(link, &LinkInterface::communicationError, qgcApp(), &QGCApplication::showAppMessage);
     (void) disconnect(link, &LinkInterface::bytesReceived, MAVLinkProtocol::instance(), &MAVLinkProtocol::receiveBytes);
     (void) disconnect(link, &LinkInterface::bytesSent, MAVLinkProtocol::instance(), &MAVLinkProtocol::logSentBytes);
+    (void) disconnect(link, &LinkInterface::connected, this, &LinkManager::_linkConnected);
     (void) disconnect(link, &LinkInterface::disconnected, this, &LinkManager::_linkDisconnected);
 
     link->_freeMavlinkChannel();
