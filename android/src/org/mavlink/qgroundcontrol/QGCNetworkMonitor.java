@@ -53,7 +53,7 @@ public class QGCNetworkMonitor {
                 connectivityManager.unregisterNetworkCallback(networkCallback);
                 QGCLogger.i(TAG, "Network monitoring stopped");
             } catch (Exception e) {
-                QGCLogger.w(TAG, "Failed to unregister network callback", e);
+                QGCLogger.w(TAG, "Failed to unregister network callback: " + e.getMessage());
             }
         }
     }
@@ -111,7 +111,7 @@ public class QGCNetworkMonitor {
                     return "cellular";
                 }
             } catch (Exception e) {
-                QGCLogger.w(TAG, "Failed to get network type", e);
+                QGCLogger.w(TAG, "Failed to get network type: " + e.getMessage());
             }
             
             return "unknown";
