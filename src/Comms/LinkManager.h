@@ -173,7 +173,7 @@ private:
 
     static constexpr int _autoconnectUpdateTimerMSecs = 1000;
     static constexpr int _reconnectCheckTimerMSecs = 2000;
-    static constexpr int _maxReconnectRetries = 10;
+    static constexpr int _maxReconnectRetries = 3;
     static constexpr int _reconnectBaseDelayMSecs = 2000;
 #ifdef Q_OS_WIN
     // Have to manually let the bootloader go by on Windows to get a working connect
