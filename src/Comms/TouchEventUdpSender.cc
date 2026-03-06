@@ -197,11 +197,21 @@ QString TouchEventUdpSender::_getVehicleLinkIp(Vehicle* vehicle) const
 
     // Intentar obtener IP según el tipo de enlace
     if (config->type() == LinkConfiguration::TypeUdp) {
-        const UDPConfiguration* udpConfig = qobject_cast<const UDPConfiguration*>(config.get());
-        if (udpConfig) {
-            const QList<std::shared_ptr<UDPClient>> targets = udpConfig->targetHosts();
-            if (!targets.isEmpty()) {
-                ipAddress = targets.first()->address.toString();
+        const UDPLink* udpLink = qobject_cast<const UDPLink*>(primaryLink.get());
+        if (udpLink) {
+            // Buscar la IP de origen del vehículo por su sysid MAVLink
+            const QHostAddress sysidAddr = udpLink->sourceAddressForSysid(static_cast<uint8_t>(vehicle->id()));
+            if (!sysidAddr.isNull()) {
+                ipAddress = sysidAddr.toString();
+            } else {
+                // Fallback: intentar target hosts configurados estáticamente
+                const UDPConfiguration* udpConfig = qobject_cast<const UDPConfiguration*>(config.get());
+                if (udpConfig) {
+                    const QList<std::shared_ptr<UDPClient>> targets = udpConfig->targetHosts();
+                    if (!targets.isEmpty()) {
+                        ipAddress = targets.first()->address.toString();
+                    }
+                }
             }
         }
     } else if (config->type() == LinkConfiguration::TypeTcp) {
