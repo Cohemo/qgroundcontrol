@@ -10,6 +10,7 @@ libs/lib/Frameworks/GStreamer.framework
 CMakeFiles
 tags
 build/
+build-android-arm64-release/
 obj
 .DS_Store
 *.log
