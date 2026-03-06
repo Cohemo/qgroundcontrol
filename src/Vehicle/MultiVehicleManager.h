@@ -84,7 +84,8 @@ private:
     void _setParameterReadyVehicleAvailable(bool parametersReady);
 
     // UGV Video Stream Control
-    void _sendStreamCommand(int vehicleId, const QString &command);
+    void _sendStreamCommand(const QString &onboardIp, const QString &command);
+    QString _getVehicleOnboardIp(Vehicle *vehicle) const;
     QString _getVehicleLinkIp(Vehicle *vehicle) const;
 
     QTimer *_gcsHeartbeatTimer = nullptr;           ///< Timer to emit heartbeats
@@ -97,6 +98,7 @@ private:
     QList<int> _ignoreVehicleIds;                   ///< List of vehicle id for which we ignore further communication
     bool _initialized = false;
     int _previousActiveVehicleId = -1;              ///< Previous active vehicle ID for stream control
+    QString _previousOnboardIp;                       ///< Previous active vehicle's onboard computer IP
     QNetworkAccessManager *_networkManager = nullptr; ///< For HTTP requests to UGV onboard computers
 
     static constexpr int kGCSHeartbeatRateMSecs = 1000;  ///< Heartbeat rate

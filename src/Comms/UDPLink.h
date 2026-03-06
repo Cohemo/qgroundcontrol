@@ -23,6 +23,8 @@
 #include <dns_sd.h>
 #endif
 
+#include <QtCore/QMap>
+
 #include "LinkConfiguration.h"
 #include "LinkInterface.h"
 
@@ -119,6 +121,10 @@ public:
     virtual ~UDPWorker();
 
     bool isConnected() const;
+    QList<std::shared_ptr<UDPClient>> sessionTargets() const;
+
+    /// Returns the last known source address for a given MAVLink sysid, or a null QHostAddress if unknown
+    QHostAddress sourceAddressForSysid(uint8_t sysid) const;
 
 public slots:
     void setupSocket();
@@ -143,8 +149,10 @@ private slots:
 private:
     const UDPConfiguration *_udpConfig = nullptr;
     QUdpSocket *_socket = nullptr;
-    QMutex _sessionTargetsMutex;
+    mutable QMutex _sessionTargetsMutex;
     QList<std::shared_ptr<UDPClient>> _sessionTargets;
+    mutable QMutex _sysidMapMutex;
+    QMap<uint8_t, QHostAddress> _sysidToAddress;
     bool _isConnected = false;
     bool _errorEmitted = false;
     QSet<QHostAddress> _localAddresses;
@@ -173,6 +181,12 @@ public:
     bool isConnected() const override;
     void disconnect() override;
     bool isSecureConnection() const override;
+
+    /// Returns a copy of the dynamically discovered session targets (thread-safe)
+    QList<std::shared_ptr<UDPClient>> sessionTargets() const;
+
+    /// Returns the last known source address for a given MAVLink sysid (thread-safe)
+    QHostAddress sourceAddressForSysid(uint8_t sysid) const;
 
 protected:
     bool _connect() override;

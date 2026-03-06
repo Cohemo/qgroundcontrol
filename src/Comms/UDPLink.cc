@@ -284,6 +284,18 @@ bool UDPWorker::isConnected() const
     return (_socket && _socket->isValid() && _isConnected);
 }
 
+QList<std::shared_ptr<UDPClient>> UDPWorker::sessionTargets() const
+{
+    QMutexLocker locker(&_sessionTargetsMutex);
+    return _sessionTargets;
+}
+
+QHostAddress UDPWorker::sourceAddressForSysid(uint8_t sysid) const
+{
+    QMutexLocker locker(&_sysidMapMutex);
+    return _sysidToAddress.value(sysid);
+}
+
 void UDPWorker::setupSocket()
 {
     Q_ASSERT(!_socket);
@@ -456,6 +468,26 @@ void UDPWorker::_onSocketReadyRead()
         const bool ipLocal = datagramIn.senderAddress().isLoopback() || _localAddresses.contains(datagramIn.senderAddress());
         const QHostAddress senderAddress = ipLocal ? QHostAddress(QHostAddress::SpecialAddress::LocalHost) : datagramIn.senderAddress();
 
+        // Track MAVLink sysid → source IP mapping (use original address, not remapped to localhost)
+        {
+            const QByteArray &dgData = datagramIn.data();
+            if (dgData.size() >= 6) {
+                const uint8_t magic = static_cast<uint8_t>(dgData[0]);
+                uint8_t sysid = 0;
+                if (magic == 0xFD && dgData.size() >= 6) {
+                    // MAVLink v2: sysid at byte 5
+                    sysid = static_cast<uint8_t>(dgData[5]);
+                } else if (magic == 0xFE && dgData.size() >= 4) {
+                    // MAVLink v1: sysid at byte 3
+                    sysid = static_cast<uint8_t>(dgData[3]);
+                }
+                if (sysid != 0) {
+                    QMutexLocker sysidLocker(&_sysidMapMutex);
+                    _sysidToAddress.insert(sysid, datagramIn.senderAddress());
+                }
+            }
+        }
+
         QMutexLocker locker(&_sessionTargetsMutex);
         if (!containsTarget(_sessionTargets, senderAddress, datagramIn.senderPort())) {
             qCDebug(UDPLinkLog) << "UDP Adding target:" << senderAddress << datagramIn.senderPort();
@@ -597,6 +629,16 @@ UDPLink::~UDPLink()
 bool UDPLink::isConnected() const
 {
     return _worker->isConnected();
+}
+
+QList<std::shared_ptr<UDPClient>> UDPLink::sessionTargets() const
+{
+    return _worker->sessionTargets();
+}
+
+QHostAddress UDPLink::sourceAddressForSysid(uint8_t sysid) const
+{
+    return _worker->sourceAddressForSysid(sysid);
 }
 
 bool UDPLink::_connect()
