@@ -57,6 +57,7 @@ public class QGCActivity extends QtActivity {
         setupMulticastLock();
 
         QGCUsbSerialManager.initialize(this);
+        QGCNetworkMonitor.initialize(this);
     }
 
     @Override
@@ -64,6 +65,7 @@ public class QGCActivity extends QtActivity {
         try {
             releaseMulticastLock();
             releaseWakeLock();
+            QGCNetworkMonitor.cleanup();
             QGCUsbSerialManager.cleanup(this);
         } catch (final Exception e) {
             Log.e(TAG, "Exception onDestroy()", e);

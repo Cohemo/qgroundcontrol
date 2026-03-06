@@ -19,7 +19,7 @@
 #include "LinkConfiguration.h"
 #include "LinkInterface.h"
 #ifndef QGC_NO_SERIAL_LINK
-    #include "QGCSerialPortInfo.h"
+#include "QGCSerialPortInfo.h"
 #endif
 
 Q_DECLARE_LOGGING_CATEGORY(LinkManagerLog)
@@ -126,8 +126,10 @@ signals:
     void isBluetoothAvailableChanged();
 
 private slots:
+    void _linkConnected();
     void _linkDisconnected();
     void _communicationError(const QString &title, const QString &error);
+    void _attemptLinkReconnection();
 
 private:
     QmlObjectListModel *_qmlLinkConfigurations();
@@ -143,6 +145,7 @@ private:
 #endif
 
     QTimer *_portListTimer = nullptr;
+    QTimer *_reconnectTimer = nullptr;
     QmlObjectListModel *_qmlConfigurations = nullptr;
     AutoConnectSettings *_autoConnectSettings = nullptr;
 
@@ -156,11 +159,22 @@ private:
     QList<SharedLinkInterfacePtr> _rgLinks;
     QList<SharedLinkConfigurationPtr> _rgLinkConfigs;
 
+    struct ReconnectEntry {
+        SharedLinkConfigurationPtr config;
+        int retryCount;
+        qint64 nextRetryTime;
+        QString lastError;
+    };
+    QList<ReconnectEntry> _reconnectQueue;
+
     static constexpr const char *_defaultUDPLinkName = "UDP Link (AutoConnect)";
     static constexpr const char *_mavlinkForwardingLinkName = "MAVLink Forwarding Link";
     static constexpr const char *_mavlinkForwardingSupportLinkName = "MAVLink Support Forwarding Link";
 
     static constexpr int _autoconnectUpdateTimerMSecs = 1000;
+    static constexpr int _reconnectCheckTimerMSecs = 2000;
+    static constexpr int _maxReconnectRetries = 3;
+    static constexpr int _reconnectBaseDelayMSecs = 2000;
 #ifdef Q_OS_WIN
     // Have to manually let the bootloader go by on Windows to get a working connect
     static constexpr int _autoconnectConnectDelayMSecs = 6000;

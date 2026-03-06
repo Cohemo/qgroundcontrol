@@ -21,6 +21,11 @@
 #include "TCPLink.h"
 #include "UDPLink.h"
 
+#include <QtNetwork/QNetworkAccessManager>
+#include <QtNetwork/QNetworkRequest>
+#include <QtNetwork/QNetworkReply>
+#include <QtCore/QDateTime>
+
 #ifdef QGC_ENABLE_BLUETOOTH
 #include "BluetoothLink.h"
 #endif
@@ -60,6 +65,7 @@ Q_APPLICATION_STATIC(LinkManager, _linkManagerInstance);
 LinkManager::LinkManager(QObject *parent)
     : QObject(parent)
     , _portListTimer(new QTimer(this))
+    , _reconnectTimer(new QTimer(this))
     , _qmlConfigurations(new QmlObjectListModel(this))
 #ifndef QGC_NO_SERIAL_LINK
     , _nmeaSocket(new UdpIODevice(this))
@@ -91,6 +97,9 @@ void LinkManager::init()
     if (!qgcApp()->runningUnitTests()) {
         (void) connect(_portListTimer, &QTimer::timeout, this, &LinkManager::_updateAutoConnectLinks);
         _portListTimer->start(_autoconnectUpdateTimerMSecs); // timeout must be long enough to get past bootloader on second pass
+        
+        (void) connect(_reconnectTimer, &QTimer::timeout, this, &LinkManager::_attemptLinkReconnection);
+        _reconnectTimer->start(_reconnectCheckTimerMSecs);
     }
 }
 
@@ -162,6 +171,7 @@ bool LinkManager::createConnectedLink(SharedLinkConfigurationPtr &config)
     (void) connect(link.get(), &LinkInterface::communicationError, this, &LinkManager::_communicationError);
     (void) connect(link.get(), &LinkInterface::bytesReceived, MAVLinkProtocol::instance(), &MAVLinkProtocol::receiveBytes);
     (void) connect(link.get(), &LinkInterface::bytesSent, MAVLinkProtocol::instance(), &MAVLinkProtocol::logSentBytes);
+    (void) connect(link.get(), &LinkInterface::connected, this, &LinkManager::_linkConnected);
     (void) connect(link.get(), &LinkInterface::disconnected, this, &LinkManager::_linkDisconnected);
 
     MAVLinkProtocol::instance()->resetMetadataForLink(link.get());
@@ -214,6 +224,72 @@ void LinkManager::disconnectAll()
     }
 }
 
+void LinkManager::_linkConnected()
+{
+    LinkInterface* const link = qobject_cast<LinkInterface*>(sender());
+
+    if (!link || !containsLink(link)) {
+        return;
+    }
+
+    SharedLinkConfigurationPtr config = link->linkConfiguration();
+    if (!config) {
+        return;
+    }
+
+    QString ipAddress;
+
+    // Get IP based on link type
+    if (config->type() == LinkConfiguration::TypeUdp) {
+        const UDPConfiguration *udpConfig = qobject_cast<const UDPConfiguration*>(config.get());
+        if (udpConfig) {
+            const QList<std::shared_ptr<UDPClient>> targets = udpConfig->targetHosts();
+            if (!targets.isEmpty()) {
+                ipAddress = targets.first()->address.toString();
+            }
+        }
+    } else if (config->type() == LinkConfiguration::TypeTcp) {
+        const TCPConfiguration *tcpConfig = qobject_cast<const TCPConfiguration*>(config.get());
+        if (tcpConfig) {
+            ipAddress = tcpConfig->host();
+        }
+    }
+
+    if (ipAddress.isEmpty()) {
+        return;
+    }
+
+    // Extract subnet (first 3 octets) from link IP
+    const QStringList ipParts = ipAddress.split('.');
+    if (ipParts.size() != 4) {
+        return;
+    }
+
+    // Build communications manager IP: 192.168.X.163
+    const QString managerIp = QString("%1.%2.%3.163")
+                                  .arg(ipParts[0])
+                                  .arg(ipParts[1])
+                                  .arg(ipParts[2]);
+
+    // Build HTTP URL: http://192.168.X.163:8000/stream
+    const QString url = QString("http://%1:8000/stream").arg(managerIp);
+
+    QNetworkAccessManager *networkManager = new QNetworkAccessManager(this);
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // JSON body: {"mensaje":"start"}
+    const QByteArray postData = "{\"mensaje\":\"start\"}";
+
+    QNetworkReply *reply = networkManager->post(request, postData);
+
+    // Handle response
+    connect(reply, &QNetworkReply::finished, [reply, networkManager]() {
+        reply->deleteLater();
+        networkManager->deleteLater();
+    });
+}
+
 void LinkManager::_linkDisconnected()
 {
     LinkInterface* const link = qobject_cast<LinkInterface*>(sender());
@@ -222,9 +298,83 @@ void LinkManager::_linkDisconnected()
         return;
     }
 
+    // Send stop command to communications manager before disconnecting
+    SharedLinkConfigurationPtr config = link->linkConfiguration();
+    if (config) {
+        QString ipAddress;
+
+        // Get IP based on link type
+        if (config->type() == LinkConfiguration::TypeUdp) {
+            const UDPConfiguration *udpConfig = qobject_cast<const UDPConfiguration*>(config.get());
+            if (udpConfig) {
+                const QList<std::shared_ptr<UDPClient>> targets = udpConfig->targetHosts();
+                if (!targets.isEmpty()) {
+                    ipAddress = targets.first()->address.toString();
+                }
+            }
+        } else if (config->type() == LinkConfiguration::TypeTcp) {
+            const TCPConfiguration *tcpConfig = qobject_cast<const TCPConfiguration*>(config.get());
+            if (tcpConfig) {
+                ipAddress = tcpConfig->host();
+            }
+        }
+
+        if (!ipAddress.isEmpty()) {
+            // Extract subnet (first 3 octets) from link IP
+            const QStringList ipParts = ipAddress.split('.');
+            if (ipParts.size() == 4) {
+                // Build communications manager IP: 192.168.X.163
+                const QString managerIp = QString("%1.%2.%3.163")
+                                              .arg(ipParts[0])
+                                              .arg(ipParts[1])
+                                              .arg(ipParts[2]);
+
+                // Build HTTP URL: http://192.168.X.163:8000/stream
+                const QString url = QString("http://%1:8000/stream").arg(managerIp);
+
+                QNetworkAccessManager *networkManager = new QNetworkAccessManager(this);
+                QNetworkRequest request(url);
+                request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+                // JSON body: {"mensaje":"stop"}
+                const QByteArray postData = "{\"mensaje\":\"stop\"}";
+
+                QNetworkReply *reply = networkManager->post(request, postData);
+
+                // Handle response
+                connect(reply, &QNetworkReply::finished, [reply, networkManager]() {
+                    reply->deleteLater();
+                    networkManager->deleteLater();
+                });
+            }
+        }
+        
+        // Add to reconnect queue for network links (TCP/UDP)
+        if (config->type() == LinkConfiguration::TypeTcp || config->type() == LinkConfiguration::TypeUdp) {
+            bool alreadyQueued = false;
+            for (const auto &entry : _reconnectQueue) {
+                if (entry.config.get() == config.get()) {
+                    alreadyQueued = true;
+                    break;
+                }
+            }
+            
+            if (!alreadyQueued && !config->isDynamic()) {
+                ReconnectEntry entry;
+                entry.config = config;
+                entry.retryCount = 0;
+                entry.nextRetryTime = QDateTime::currentMSecsSinceEpoch() + _reconnectBaseDelayMSecs;
+                entry.lastError = "Connection lost";
+                _reconnectQueue.append(entry);
+                qCDebug(LinkManagerLog) << "Added" << config->name() << "to reconnect queue";
+            }
+        }
+    }
+
     (void) disconnect(link, &LinkInterface::communicationError, qgcApp(), &QGCApplication::showAppMessage);
     (void) disconnect(link, &LinkInterface::bytesReceived, MAVLinkProtocol::instance(), &MAVLinkProtocol::receiveBytes);
     (void) disconnect(link, &LinkInterface::bytesSent, MAVLinkProtocol::instance(), &MAVLinkProtocol::logSentBytes);
+    (void) disconnect(link, &LinkInterface::connected, this, &LinkManager::_linkConnected);
     (void) disconnect(link, &LinkInterface::disconnected, this, &LinkManager::_linkDisconnected);
 
     link->_freeMavlinkChannel();
@@ -258,6 +408,67 @@ bool LinkManager::_connectionsSuspendedMsg() const
     }
 
     return false;
+}
+
+void LinkManager::_attemptLinkReconnection()
+{
+    if (_reconnectQueue.isEmpty()) {
+        return;
+    }
+    
+    qint64 currentTime = QDateTime::currentMSecsSinceEpoch();
+    
+    for (int i = _reconnectQueue.size() - 1; i >= 0; --i) {
+        ReconnectEntry &entry = _reconnectQueue[i];
+        
+        // Check if it's time to retry
+        if (currentTime < entry.nextRetryTime) {
+            continue;
+        }
+        
+        // Check if max retries exceeded
+        if (entry.retryCount >= _maxReconnectRetries) {
+            qCWarning(LinkManagerLog) << "Max reconnect retries exceeded for" << entry.config->name();
+            _reconnectQueue.removeAt(i);
+            continue;
+        }
+        
+        // Check if link is already connected
+        bool isConnected = false;
+        for (const SharedLinkInterfacePtr &link : _rgLinks) {
+            if (link->linkConfiguration().get() == entry.config.get()) {
+                isConnected = true;
+                break;
+            }
+        }
+        
+        if (isConnected) {
+            qCDebug(LinkManagerLog) << "Link" << entry.config->name() << "already connected, removing from queue";
+            _reconnectQueue.removeAt(i);
+            continue;
+        }
+        
+        // Attempt reconnection
+        entry.retryCount++;
+        
+        // Calculate exponential backoff: 2, 4, 8, 16, 32 seconds max
+        int delayMultiplier = 1 << std::min(entry.retryCount - 1, 4);
+        entry.nextRetryTime = currentTime + (_reconnectBaseDelayMSecs * delayMultiplier);
+        
+        qCDebug(LinkManagerLog) << "Attempting reconnect for" << entry.config->name() 
+                                << "retry" << entry.retryCount << "of" << _maxReconnectRetries;
+        
+        SharedLinkConfigurationPtr configCopy = entry.config;
+        bool success = createConnectedLink(configCopy);
+        
+        if (success) {
+            qCDebug(LinkManagerLog) << "Successfully reconnected" << entry.config->name();
+            _reconnectQueue.removeAt(i);
+        } else {
+            qCDebug(LinkManagerLog) << "Reconnect failed for" << entry.config->name() 
+                                    << "will retry in" << (delayMultiplier * _reconnectBaseDelayMSecs / 1000) << "seconds";
+        }
+    }
 }
 
 void LinkManager::saveLinkConfigurationList()
@@ -523,6 +734,8 @@ void LinkManager::_updateAutoConnectLinks()
 
 void LinkManager::shutdown()
 {
+    _reconnectTimer->stop();
+    _reconnectQueue.clear();
     setConnectionsSuspended(tr("Shutdown"));
     disconnectAll();
 
