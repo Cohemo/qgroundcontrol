@@ -391,9 +391,10 @@ void MultiVehicleManager::_setActiveVehicle(Vehicle *vehicle)
 {
     if (vehicle != _activeVehicle) {
         // Stop stream on previous vehicle if any
-        if (_previousActiveVehicleId >= 0) {
-            qCDebug(MultiVehicleManagerLog) << "Stopping stream on previous vehicle:" << _previousActiveVehicleId;
-            _sendStreamCommand(_previousActiveVehicleId, "stop");
+        if (!_previousOnboardIp.isEmpty()) {
+            qCDebug(MultiVehicleManagerLog) << "Stopping stream on previous vehicle IP:" << _previousOnboardIp;
+            _sendStreamCommand(_previousOnboardIp, "stop");
+            _previousOnboardIp.clear();
         }
 
         _activeVehicle = vehicle;
@@ -401,12 +402,16 @@ void MultiVehicleManager::_setActiveVehicle(Vehicle *vehicle)
         // Start stream on new vehicle if any
         if (_activeVehicle) {
             _previousActiveVehicleId = _activeVehicle->id();
-            qCDebug(MultiVehicleManagerLog) << "Starting stream on new vehicle:" << _previousActiveVehicleId;
+            const QString newOnboardIp = _getVehicleOnboardIp(_activeVehicle);
+            qCDebug(MultiVehicleManagerLog) << "Starting stream on new vehicle:" << _previousActiveVehicleId << "IP:" << newOnboardIp;
 
-            // Delay para asegurar que VehicleLinkManager esté inicializado
-            QTimer::singleShot(500, this, [this, vehicleId = _previousActiveVehicleId]() {
-                _sendStreamCommand(vehicleId, "start");
-            });
+            if (!newOnboardIp.isEmpty()) {
+                _previousOnboardIp = newOnboardIp;
+                // Delay para asegurar que VehicleLinkManager esté inicializado
+                QTimer::singleShot(500, this, [this, onboardIp = newOnboardIp]() {
+                    _sendStreamCommand(onboardIp, "start");
+                });
+            }
         } else {
             _previousActiveVehicleId = -1;
         }
@@ -415,36 +420,14 @@ void MultiVehicleManager::_setActiveVehicle(Vehicle *vehicle)
     }
 }
 
-void MultiVehicleManager::_sendStreamCommand(int vehicleId, const QString &command)
+void MultiVehicleManager::_sendStreamCommand(const QString &onboardIp, const QString &command)
 {
-    Vehicle *vehicle = getVehicleById(vehicleId);
-    if (!vehicle) {
-        qCWarning(MultiVehicleManagerLog) << "Vehicle not found:" << vehicleId;
+    if (onboardIp.isEmpty()) {
+        qCWarning(MultiVehicleManagerLog) << "Cannot send stream command: empty onboard IP";
         return;
     }
 
-    // Get vehicle's link IP
-    const QString vehicleLinkIp = _getVehicleLinkIp(vehicle);
-    if (vehicleLinkIp.isEmpty()) {
-        qCWarning(MultiVehicleManagerLog) << "Could not get link IP for vehicle:" << vehicleId;
-        return;
-    }
-
-    // Extract subnet (first 3 octets) from vehicle IP
-    const QStringList ipParts = vehicleLinkIp.split('.');
-    if (ipParts.size() < 3) {
-        qCWarning(MultiVehicleManagerLog) << "Invalid IP format:" << vehicleLinkIp;
-        return;
-    }
-
-    // Build onboard computer IP: 192.168.X.163
-    const QString onboardIp = QString("%1.%2.%3.%4")
-                                  .arg(ipParts[0])
-                                  .arg(ipParts[1])
-                                  .arg(ipParts[2])
-                                  .arg(kOnboardComputerLastOctet);
-
-    // Build HTTP URL: http://192.168.X.163/stream
+    // Build HTTP URL: http://192.168.X.163:8000/stream
     const QString url = QString("http://%1:8000/stream").arg(onboardIp);
 
     qCDebug(MultiVehicleManagerLog) << "Sending stream command to:" << url;
@@ -459,9 +442,9 @@ void MultiVehicleManager::_sendStreamCommand(int vehicleId, const QString &comma
     QNetworkReply *reply = _networkManager->post(request, postData);
 
     // Handle response asynchronously
-    connect(reply, &QNetworkReply::finished, this, [reply, vehicleId, command, url]() {
+    connect(reply, &QNetworkReply::finished, this, [reply, onboardIp, command, url]() {
         if (reply->error() == QNetworkReply::NoError) {
-            qCDebug(MultiVehicleManagerLog) << "Stream command successful for vehicle:" << vehicleId
+            qCDebug(MultiVehicleManagerLog) << "Stream command successful for IP:" << onboardIp
                                             << "command:" << command;
         } else {
             qCWarning(MultiVehicleManagerLog) << "Failed to send stream command to:" << url
@@ -469,6 +452,25 @@ void MultiVehicleManager::_sendStreamCommand(int vehicleId, const QString &comma
         }
         reply->deleteLater();
     });
+}
+
+QString MultiVehicleManager::_getVehicleOnboardIp(Vehicle *vehicle) const
+{
+    const QString vehicleLinkIp = _getVehicleLinkIp(vehicle);
+    if (vehicleLinkIp.isEmpty()) {
+        return QString();
+    }
+
+    const QStringList ipParts = vehicleLinkIp.split('.');
+    if (ipParts.size() < 4) {
+        return QString();
+    }
+
+    return QString("%1.%2.%3.%4")
+        .arg(ipParts[0])
+        .arg(ipParts[1])
+        .arg(ipParts[2])
+        .arg(kOnboardComputerLastOctet);
 }
 
 QString MultiVehicleManager::_getVehicleLinkIp(Vehicle *vehicle) const
@@ -496,11 +498,21 @@ QString MultiVehicleManager::_getVehicleLinkIp(Vehicle *vehicle) const
 
     // Try to get IP based on link type
     if (config->type() == LinkConfiguration::TypeUdp) {
-        const UDPConfiguration *udpConfig = qobject_cast<const UDPConfiguration*>(config.get());
-        if (udpConfig) {
-            const QList<std::shared_ptr<UDPClient>> targets = udpConfig->targetHosts();
-            if (!targets.isEmpty()) {
-                ipAddress = targets.first()->address.toString();
+        const UDPLink *udpLink = qobject_cast<const UDPLink*>(primaryLink.get());
+        if (udpLink) {
+            // Buscar la IP de origen del vehículo por su sysid MAVLink
+            const QHostAddress sysidAddr = udpLink->sourceAddressForSysid(static_cast<uint8_t>(vehicle->id()));
+            if (!sysidAddr.isNull()) {
+                ipAddress = sysidAddr.toString();
+            } else {
+                // Fallback: intentar target hosts configurados estáticamente
+                const UDPConfiguration *udpConfig = qobject_cast<const UDPConfiguration*>(config.get());
+                if (udpConfig) {
+                    const QList<std::shared_ptr<UDPClient>> targets = udpConfig->targetHosts();
+                    if (!targets.isEmpty()) {
+                        ipAddress = targets.first()->address.toString();
+                    }
+                }
             }
         }
     } else if (config->type() == LinkConfiguration::TypeTcp) {
