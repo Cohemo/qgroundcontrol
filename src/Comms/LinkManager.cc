@@ -24,7 +24,6 @@
 #include <QtNetwork/QNetworkAccessManager>
 #include <QtNetwork/QNetworkRequest>
 #include <QtNetwork/QNetworkReply>
-#include <QtCore/QDateTime>
 
 #ifdef QGC_ENABLE_BLUETOOTH
 #include "BluetoothLink.h"
@@ -65,7 +64,6 @@ Q_APPLICATION_STATIC(LinkManager, _linkManagerInstance);
 LinkManager::LinkManager(QObject *parent)
     : QObject(parent)
     , _portListTimer(new QTimer(this))
-    , _reconnectTimer(new QTimer(this))
     , _qmlConfigurations(new QmlObjectListModel(this))
 #ifndef QGC_NO_SERIAL_LINK
     , _nmeaSocket(new UdpIODevice(this))
@@ -97,9 +95,6 @@ void LinkManager::init()
     if (!qgcApp()->runningUnitTests()) {
         (void) connect(_portListTimer, &QTimer::timeout, this, &LinkManager::_updateAutoConnectLinks);
         _portListTimer->start(_autoconnectUpdateTimerMSecs); // timeout must be long enough to get past bootloader on second pass
-        
-        (void) connect(_reconnectTimer, &QTimer::timeout, this, &LinkManager::_attemptLinkReconnection);
-        _reconnectTimer->start(_reconnectCheckTimerMSecs);
     }
 }
 
@@ -349,26 +344,6 @@ void LinkManager::_linkDisconnected()
             }
         }
         
-        // Add to reconnect queue for network links (TCP/UDP)
-        if (config->type() == LinkConfiguration::TypeTcp || config->type() == LinkConfiguration::TypeUdp) {
-            bool alreadyQueued = false;
-            for (const auto &entry : _reconnectQueue) {
-                if (entry.config.get() == config.get()) {
-                    alreadyQueued = true;
-                    break;
-                }
-            }
-            
-            if (!alreadyQueued && !config->isDynamic()) {
-                ReconnectEntry entry;
-                entry.config = config;
-                entry.retryCount = 0;
-                entry.nextRetryTime = QDateTime::currentMSecsSinceEpoch() + _reconnectBaseDelayMSecs;
-                entry.lastError = "Connection lost";
-                _reconnectQueue.append(entry);
-                qCDebug(LinkManagerLog) << "Added" << config->name() << "to reconnect queue";
-            }
-        }
     }
 
     (void) disconnect(link, &LinkInterface::communicationError, qgcApp(), &QGCApplication::showAppMessage);
@@ -408,67 +383,6 @@ bool LinkManager::_connectionsSuspendedMsg() const
     }
 
     return false;
-}
-
-void LinkManager::_attemptLinkReconnection()
-{
-    if (_reconnectQueue.isEmpty()) {
-        return;
-    }
-    
-    qint64 currentTime = QDateTime::currentMSecsSinceEpoch();
-    
-    for (int i = _reconnectQueue.size() - 1; i >= 0; --i) {
-        ReconnectEntry &entry = _reconnectQueue[i];
-        
-        // Check if it's time to retry
-        if (currentTime < entry.nextRetryTime) {
-            continue;
-        }
-        
-        // Check if max retries exceeded
-        if (entry.retryCount >= _maxReconnectRetries) {
-            qCWarning(LinkManagerLog) << "Max reconnect retries exceeded for" << entry.config->name();
-            _reconnectQueue.removeAt(i);
-            continue;
-        }
-        
-        // Check if link is already connected
-        bool isConnected = false;
-        for (const SharedLinkInterfacePtr &link : _rgLinks) {
-            if (link->linkConfiguration().get() == entry.config.get()) {
-                isConnected = true;
-                break;
-            }
-        }
-        
-        if (isConnected) {
-            qCDebug(LinkManagerLog) << "Link" << entry.config->name() << "already connected, removing from queue";
-            _reconnectQueue.removeAt(i);
-            continue;
-        }
-        
-        // Attempt reconnection
-        entry.retryCount++;
-        
-        // Calculate exponential backoff: 2, 4, 8, 16, 32 seconds max
-        int delayMultiplier = 1 << std::min(entry.retryCount - 1, 4);
-        entry.nextRetryTime = currentTime + (_reconnectBaseDelayMSecs * delayMultiplier);
-        
-        qCDebug(LinkManagerLog) << "Attempting reconnect for" << entry.config->name() 
-                                << "retry" << entry.retryCount << "of" << _maxReconnectRetries;
-        
-        SharedLinkConfigurationPtr configCopy = entry.config;
-        bool success = createConnectedLink(configCopy);
-        
-        if (success) {
-            qCDebug(LinkManagerLog) << "Successfully reconnected" << entry.config->name();
-            _reconnectQueue.removeAt(i);
-        } else {
-            qCDebug(LinkManagerLog) << "Reconnect failed for" << entry.config->name() 
-                                    << "will retry in" << (delayMultiplier * _reconnectBaseDelayMSecs / 1000) << "seconds";
-        }
-    }
 }
 
 void LinkManager::saveLinkConfigurationList()
@@ -734,8 +648,6 @@ void LinkManager::_updateAutoConnectLinks()
 
 void LinkManager::shutdown()
 {
-    _reconnectTimer->stop();
-    _reconnectQueue.clear();
     setConnectionsSuspended(tr("Shutdown"));
     disconnectAll();
 
