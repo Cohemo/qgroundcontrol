@@ -99,3 +99,5 @@ cpm_modules
 # Build outputs
 QGroundControl.apk
 QGroundControl.apk.idsig
+*.apk
+*.apk.idsig
