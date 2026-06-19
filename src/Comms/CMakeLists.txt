@@ -1,5 +1,7 @@
 target_sources(${CMAKE_PROJECT_NAME}
     PRIVATE
+        BackupDownloader.cc
+        BackupDownloader.h
         LinkConfiguration.cc
         LinkConfiguration.h
         LinkInterface.cc

@@ -102,6 +102,12 @@
     "min":          3,
     "max":          60,
     "default":      10
+},
+{
+    "name":         "onboardComputerTouchAddress",
+    "shortDesc":    "IP address of the onboard computer that receives video touch events over UDP (port 12345). Leave empty to derive it automatically from the active vehicle's link.",
+    "type":         "string",
+    "default":      ""
 }
 ]
 }

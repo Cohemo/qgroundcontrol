@@ -1,0 +1,551 @@
+================================================================================
+  ARQUITECTURA DE COMUNICACIONES UGV — QGroundControl + GestorComunicacionUGV
+  Documento técnico detallado
+  Fecha: 26 de mayo de 2026 (revisión bugs BUG1/2/3 corregidos)
+
+  HISTORIAL:
+    2026-05-26 v1 — análisis inicial, identificación de 3 bugs.
+    2026-05-26 v2 — BUG 1, 2 y 3 corregidos en rama
+                    feature/backup-dashboard-launcher.
+                    LinkManager ya NO emite POSTs al gestor; la única
+                    fuente de start/stop es MultiVehicleManager.
+================================================================================
+
+
+──────────────────────────────────────────────────────────────────────────────
+1. VISIÓN GENERAL DEL SISTEMA
+──────────────────────────────────────────────────────────────────────────────
+
+El sistema se compone de dos capas bien diferenciadas:
+
+  A) QGroundControl (tablet/PC Android)
+     → Interfaz de usuario, control MAVLink, envío de eventos táctiles,
+       descarga de backups y control del streaming de vídeo.
+
+  B) GestorComunicacionUGV (ordenador de abordo del UGV, IP .163)
+     → Servidor FastAPI que recibe órdenes de QGC, gestiona el streaming
+       de vídeo con GStreamer y reconfigura el módulo de radio.
+
+Cada UGV tiene su propia subred:
+
+  UGV 1:  Pixhawk/PX4 en 192.168.1.7   |  Ordenador abordo en 192.168.1.163
+  UGV 2:  Pixhawk/PX4 en 192.168.2.7   |  Ordenador abordo en 192.168.2.163
+  UGV N:  Pixhawk/PX4 en 192.168.N.7   |  Ordenador abordo en 192.168.N.163
+
+La identidad del UGV se configura mediante la variable de entorno UGV_ID
+en el script Workspaces/AUTO/ugv_config.sh del ordenador de abordo.
+
+
+──────────────────────────────────────────────────────────────────────────────
+2. COMPONENTES EN QGC (src/)
+──────────────────────────────────────────────────────────────────────────────
+
+2.1  src/Comms/LinkManager.cc / LinkManager.h
+─────────────────────────────────────────────
+Gestiona todos los enlaces MAVLink (UDP, TCP, Serie, Bluetooth...).
+
+Tras la corrección de los bugs BUG 1, 2 y 3 (ver historial en cabecera),
+LinkManager YA NO envía POST al GestorComunicacionUGV. Su responsabilidad
+se limita a:
+
+  - Gestionar la lista _rgLinks de enlaces activos.
+  - Conectar/desconectar las señales bytesReceived, bytesSent y
+    communicationError de cada LinkInterface a MAVLinkProtocol.
+  - Liberar el canal MAVLink y eliminar el enlace de _rgLinks cuando
+    se emite la señal LinkInterface::disconnected (a través del slot
+    _linkDisconnected, que ahora SOLO hace limpieza).
+
+El slot _linkConnected ha sido eliminado por completo. La señal
+LinkInterface::connected ya no tiene oyente en LinkManager.
+
+QUIÉN HACE AHORA EL POST start/stop AL GESTOR:
+  MultiVehicleManager::_setActiveVehicle() es el único responsable de
+  enviar start/stop al servidor de control del UGV (puerto 8000). Esto
+  ocurre cuando cambia el vehículo activo (incluido el caso de un único
+  vehículo recién detectado y el caso de borrado del último vehículo).
+
+
+2.2  src/Vehicle/MultiVehicleManager.cc / MultiVehicleManager.h
+────────────────────────────────────────────────────────────────
+Gestiona la lista de vehículos detectados vía MAVLink y cuál es el activo.
+
+DETECCIÓN DE VEHÍCULO:
+  MAVLinkProtocol emite vehicleHeartbeatInfo() al recibir el primer
+  heartbeat de un autopilot (component_id == MAV_COMP_ID_AUTOPILOT1).
+  _vehicleHeartbeatInfo() crea un objeto Vehicle y lo añade a _vehicles.
+  Si es el único vehículo, llama a setActiveVehicle() automáticamente.
+  Si hay más de uno, NO lo activa → el usuario debe seleccionarlo
+  manualmente en la UI.
+
+CAMBIO DE VEHÍCULO ACTIVO:
+  setActiveVehicle(vehicle)
+    → _setActiveVehiclePhase2(vehicle)   [20ms después, para que QML se desenganche]
+      → _setActiveVehicle(vehicle)
+
+En _setActiveVehicle(vehicle):
+  1. Si había vehículo activo anterior con IP guardada en _previousOnboardIp:
+       → _sendStreamCommand(_previousOnboardIp, "stop")
+       → _previousOnboardIp.clear()
+
+  2. Si hay nuevo vehículo activo:
+       → _getVehicleOnboardIp(vehicle)  para calcular su IP .163
+       → guarda en _previousOnboardIp
+       → 500ms después: _sendStreamCommand(onboardIp, "start")
+         [delay para asegurar que VehicleLinkManager esté inicializado]
+
+  3. emit activeVehicleChanged(vehicle)
+
+ELIMINACIÓN DE VEHÍCULO:
+  allLinksRemoved → _deleteVehiclePhase1() → _deleteVehiclePhase2()
+  En Phase2 se llama a _setActiveVehicle(newActiveVehicle) donde
+  newActiveVehicle es el primero de la lista restante, o nullptr si vacía.
+  Esto provoca el stop del vehículo eliminado y el start del siguiente (si lo hay).
+
+CÁLCULO DE IP DEL ORDENADOR DE ABORDO — _getVehicleOnboardIp(vehicle):
+  1. Obtiene el primaryLink del VehicleLinkManager del vehículo.
+  2. Llama a _getVehicleLinkIp(vehicle):
+       Para enlace UDP:
+         a) Pide udpLink->sourceAddressForSysid(vehicle->id())
+            → Busca en el mapa _sysidToAddress[sysid] la IP REAL desde
+              donde llegaron datagramas de ese sysid específico.
+              Este mapa se construye en tiempo real al llegar cada datagrama
+              (ver sección 2.4).
+         b) Fallback si aún no hay datos: primer targetHost configurado.
+       Para enlace TCP:
+         a) tcpConfig->host() directamente.
+  3. Extrae primeros 3 octetos de la IP obtenida.
+  4. Añade kOnboardComputerLastOctet = 163.
+  Resultado: "192.168.X.163"
+
+Constante definida en MultiVehicleManager.h línea 105:
+  static constexpr int kOnboardComputerLastOctet = 163;
+
+
+2.3  src/Comms/UDPLink.cc / UDPLink.h
+──────────────────────────────────────
+Implementación del enlace UDP. El worker UDPWorker mantiene un mapa:
+
+  QMap<uint8_t, QHostAddress> _sysidToAddress
+
+Cada vez que llega un datagrama UDP, se parsea como MAVLink para extraer
+el sysid del byte de cabecera:
+  - MAVLink v2 (magic=0xFD): sysid en byte[5]
+  - MAVLink v1 (magic=0xFE): sysid en byte[3]
+
+El sysid y la dirección IP de origen se insertan en el mapa:
+  _sysidToAddress.insert(sysid, datagramIn.senderAddress())
+
+Método público:
+  sourceAddressForSysid(uint8_t sysid) → QHostAddress
+  (con mutex para thread-safety)
+
+Esto permite que, con 2 vehículos en la misma red, QGC sepa exactamente
+desde qué IP envía paquetes cada vehículo identificado por su sysid MAVLink.
+Ejemplo:
+  sysid=1 → 192.168.1.7   (UGV1)
+  sysid=2 → 192.168.2.7   (UGV2)
+
+
+2.4  src/Comms/TouchEventUdpSender.cc / TouchEventUdpSender.h
+──────────────────────────────────────────────────────────────
+Envía eventos táctiles de la tablet por UDP al ordenador de abordo
+para controlar remotamente el escritorio del UGV (el QGC del tándem).
+
+Destino por defecto: 192.168.168.163, puerto 12345.
+
+Al cambiar el vehículo activo (señal activeVehicleChanged):
+  _onActiveVehicleChanged(vehicle)
+    → _updateTargetFromVehicle(vehicle)
+      → _getVehicleLinkIp(vehicle)   [misma lógica que MultiVehicleManager]
+      → Construye "192.168.X.163" con el último octeto kOnboardComputerLastOctet
+      → Actualiza _targetAddress
+
+Tipos de eventos que envía (JSON por UDP):
+  { "type": "pressed",       "x": ..., "y": ..., "timestamp": ... }
+  { "type": "moved",         "x": ..., "y": ..., "timestamp": ... }
+  { "type": "released",      "x": ..., "y": ..., "timestamp": ... }
+  { "type": "clicked",       "x": ..., "y": ..., "timestamp": ... }
+  { "type": "doubleClicked", "x": ..., "y": ..., "timestamp": ... }
+
+Throttling: los eventos "moved" tienen un intervalo mínimo de 50ms
+(máximo 20 eventos/segundo) para no saturar la radio.
+
+Integrado en QML en:
+  src/FlightDisplay/FlyViewWidgetLayer.qml  (línea 60)
+  src/FlightDisplay/FlyViewVideo.qml        (línea 27)
+
+
+2.5  src/Comms/BackupDownloader.cc / BackupDownloader.h
+────────────────────────────────────────────────────────
+Descarga automática de backups desde el servidor del UGV.
+Es un QML_SINGLETON que se conecta via SSE (Server-Sent Events) a:
+  GET http://<serverUrl>/events
+
+Cuando recibe un evento SSE con status "saved", "deleted", "poi_saved"
+o "poi_deleted", descarga pois.json desde:
+  GET http://<serverUrl>/api/pois
+
+Periódicamente (cada zipIntervalMinutes, por defecto 5 min) descarga
+todos los ZIPs de mapas desde:
+  GET http://<serverUrl>/api/maps
+
+Los ficheros se guardan en:
+  <QGC_save_path>/Mapas Descargados/
+
+Tiene reconexión automática SSE con backoff de 5 segundos si se corta
+la conexión. Expone openDashboardInBrowser() para abrir el panel web
+en un navegador externo (evita problemas con touch en WebView Android).
+
+
+──────────────────────────────────────────────────────────────────────────────
+3. COMPONENTE EN EL UGV — GestorComunicacionUGV.py
+──────────────────────────────────────────────────────────────────────────────
+
+Archivo: /home/diego/Escritorio/UGV-UME/Workspaces/AUTO/GestorComunicacionUGV.py
+
+Servidor FastAPI escuchando en 0.0.0.0:8000.
+Identidad configurada por variable de entorno UGV_ID (por defecto 1).
+
+  PIXHAWK_IP = "192.168.{UGV_ID}.7"
+  PIXHAWK_GW = "192.168.{UGV_ID}.1"
+
+3.1  Endpoints REST
+────────────────────
+
+POST /stream
+  Body: {"mensaje": "start"} o {"mensaje": "stop"}
+  Comportamiento "start":
+    1. switch_stream_to(client_ip, reboot_px4=True)
+       donde client_ip es la IP de la tablet/PC que hizo el POST
+    2. Detiene stream anterior (si existía)
+    3. Lanza nuevo stream GStreamer hacia client_ip:5600
+    4. Reconfigura el módulo de radio para enviar telemetría a client_ip
+    5. Envía comando de reboot al PX4 via ROS2
+  Comportamiento "stop":
+    1. stop_stream()
+  Responde: {"status": "ok", "ip": client_ip, "mensaje": mensaje}
+
+POST /set_ip
+  Body: {"mensaje": "<ip_destino>"}
+  Cambia el stream a la IP especificada manualmente (ignora client_ip).
+  También ejecuta reboot PX4.
+
+GET /status
+  Responde: {"stream_running": bool, "current_ip": string}
+
+POST /reboot_px4
+  Lanza send_px4_reboot() directamente.
+  Responde: {"status": "ok", "message": "..."}
+
+3.2  Arranque automático
+─────────────────────────
+Al iniciar la aplicación (startup_event) se lanza un thread que:
+  1. Espera 15 segundos (para que la radio establezca conexión).
+  2. Llama a switch_stream_to("10.0.1.1", False)
+     → Inicia stream hacia la IP por defecto sin hacer reboot del PX4.
+
+3.3  Streaming de vídeo — GStreamer
+─────────────────────────────────────
+start_stream(ip_destino):
+  1. Fuerza resolución 1280x720 con xrandr.
+  2. Intenta lanzar pipeline H265 HW (vaapih265enc):
+       ximagesrc → glupload → glcolorconvert → gldownload →
+       vaapih265enc (900kbps, cbr) → h265parse →
+       rtph265pay → udpsink host=<ip> port=5600
+  3. Si falla (el proceso muere en <1.2s), intenta H264 HW (vaapih264enc):
+       ximagesrc → videoconvert → vaapih264enc (1800kbps) → h264parse →
+       rtph264pay → udpsink host=<ip> port=5600
+  4. Si falla, intenta H264 SW (x264enc):
+       ximagesrc → videoconvert → videoscale → x264enc (1800kbps, zerolatency) →
+       h264parse → rtph264pay → udpsink host=<ip> port=5600
+
+stop_stream():
+  Envía SIGTERM al proceso GStreamer. Si no responde en 1s, SIGKILL.
+
+3.4  Reconfiguración del módulo de radio — update_pixhawk_destination(new_ip)
+───────────────────────────────────────────────────────────────────────────────
+Hace un HTTP POST al panel web del módulo de radio Pixhawk (probablemente
+RFD900x o similar) en http://192.168.{UGV_ID}.7/ con un formulario que
+actualiza el destino de los paquetes UDP:
+
+  Campos relevantes:
+    lca  = PIXHAWK_IP           (IP local del módulo)
+    lcp  = "8234"               (puerto UDP local)
+    dsa  = new_ip               (IP destino — la tablet/PC con QGC)
+    dsp  = "8234"               (puerto UDP destino)
+    bdr  = "9"                  (baudrate 115200)
+    post = "Submit"             (acción del formulario web)
+
+3.5  Reboot del PX4 — send_px4_reboot()
+─────────────────────────────────────────
+Publica un VehicleCommand MAVLink de tipo VEHICLE_CMD_PREFLIGHT_REBOOT_SHUTDOWN
+(comando 246, param1=1.0) via ROS2:
+  ros2 topic pub --once /fmu/in/vehicle_command px4_msgs/msg/VehicleCommand
+  { command: 246, param1: 1.0, target_system: UGV_ID, ... }
+
+
+──────────────────────────────────────────────────────────────────────────────
+4. FLUJO COMPLETO — ESCENARIO CONEXIÓN 1 UGV
+──────────────────────────────────────────────────────────────────────────────
+
+  [TABLET CON QGC]                         [UGV 1 — 192.168.1.163]
+
+  1. Usuario configura enlace UDP          GestorComunicacion ya corriendo,
+     destino 192.168.1.7 en QGC.          stream hacia 10.0.1.1 (defecto).
+
+  2. Usuario pulsa "Connect".
+
+  3. LinkManager crea UDPLink.
+     UDPLink._connect() → enlace activo.
+     Señal connected → (sin oyente; LinkManager NO emite ningún POST).
+
+  4. Primer heartbeat PX4 llega por UDP.
+     UDPWorker registra: sysidToAddress[1] = 192.168.1.7
+     MAVLinkProtocol emite vehicleHeartbeatInfo(link, id=1, ...).
+     MultiVehicleManager crea Vehicle(id=1).
+     Es el único vehículo → setActiveVehicle(vehicle1).
+     _setActiveVehicle(vehicle1):
+       No había _previousOnboardIp → no hay stop.
+       _getVehicleOnboardIp(vehicle1):
+         sourceAddressForSysid(1) = 192.168.1.7
+         → onboardIp = 192.168.1.163
+       _previousOnboardIp = "192.168.1.163"
+       Timer 500ms → _sendStreamCommand("192.168.1.163", "start")
+       POST /stream {"mensaje":"start"}  ──────────────────────────►
+                                          switch_stream_to(tablet_ip, True)
+                                          ├── stop_stream() (para 10.0.1.1)
+                                          ├── start_stream(tablet_ip) → GStreamer UDP:5600
+                                          ├── update_pixhawk_destination(tablet_ip)
+                                          └── send_px4_reboot()
+
+     (Un único start, en el momento correcto: después de que se haya
+      identificado el sysid del vehículo y se le haya activado.
+      No hay reboot duplicado del PX4.)
+
+  5. Stream de vídeo activo:  UGV → tablet:5600
+     Telemetría MAVLink activa: UGV → tablet:14550 (o puerto configurado)
+     Eventos táctiles: tablet → UGV:12345 (TouchEventUdpSender)
+
+
+──────────────────────────────────────────────────────────────────────────────
+5. FLUJO COMPLETO — ESCENARIO CAMBIO DE VEHÍCULO ACTIVO (2 UGVs)
+──────────────────────────────────────────────────────────────────────────────
+
+  [TABLET CON QGC]                  [UGV 1 — .163]    [UGV 2 — .163]
+
+  Estado inicial: UGV1 activo, stream corriendo.
+  UGV2 ya conectado por MAVLink pero NO activo.
+
+  Al conectar UGV2 NO se envía ningún POST start (LinkManager ya no lo
+  hace). UGV2 sigue con su stream por defecto hacia 10.0.1.1 hasta que
+  el usuario lo active.
+
+  Usuario selecciona UGV2 en la UI:
+
+  setActiveVehicle(vehicle2)
+    → QTimer 20ms
+      → _setActiveVehiclePhase2(vehicle2)
+        → _setActiveVehicle(vehicle2):
+            _previousOnboardIp = "192.168.1.163"
+            _sendStreamCommand("192.168.1.163", "stop")  ──────────►
+                                                          stop_stream()
+
+            vehicle2 activo:
+            sourceAddressForSysid(2) = 192.168.2.7
+            onboardIp = "192.168.2.163"
+            _previousOnboardIp = "192.168.2.163"
+            Timer 500ms:
+            _sendStreamCommand("192.168.2.163", "start") ──────────────────────►
+                                                           switch_stream_to(tablet_ip, True)
+                                                           start_stream, update_radio, reboot_px4
+
+  TouchEventUdpSender también actualiza su destino a 192.168.2.163.
+
+
+──────────────────────────────────────────────────────────────────────────────
+6. BUGS DETECTADOS Y ANÁLISIS  (TODOS CORREGIDOS — v2)
+──────────────────────────────────────────────────────────────────────────────
+
+BUG 1 — Start duplicado al conectar el único vehículo  [CORREGIDO]
+───────────────────────────────────────────────────────
+ARCHIVO:  src/Comms/LinkManager.cc  (_linkConnected)
+          src/Vehicle/MultiVehicleManager.cc  (_setActiveVehicle)
+
+DESCRIPCIÓN (histórica):
+  Cuando se conectaba el primer vehículo, QGC mandaba DOS "start":
+    - Uno inmediato desde _linkConnected() (~250ms después del connect)
+    - Otro a los 500ms desde _setActiveVehicle() al detectar el heartbeat
+
+  Consecuencia: el GestorComunicacionUGV arrancaba el stream, lo paraba
+  y lo volvía a arrancar 500ms después (switch_stream_to incluye
+  stop+start). Además, el PX4 recibía DOS comandos de reboot en ~500ms.
+
+CORRECCIÓN APLICADA:
+  Se eliminó por completo el slot _linkConnected (tanto la función como
+  su conexión a la señal LinkInterface::connected). Ahora el único
+  responsable de enviar "start" es MultiVehicleManager::_setActiveVehicle().
+
+BUG 2 — Stream arrancado en vehículo NO activo  [CORREGIDO]
+────────────────────────────────────────────────
+ARCHIVO:  src/Comms/LinkManager.cc  (_linkConnected)
+
+DESCRIPCIÓN (histórica):
+  _linkConnected() mandaba "start" a CUALQUIER enlace que conectara,
+  sin verificar si ese enlace pertenecía al vehículo activo.
+
+  Escenario problemático:
+    1. UGV1 activo, stream corriendo.
+    2. Se conectaba UGV2 → _linkConnected() mandaba "start" a UGV2.
+    3. UGV2 NO se activaba automáticamente (ya hay uno activo).
+    4. Resultado: UGV1 y UGV2 streameando simultáneamente, UGV2 rebooteando
+       su PX4 sin que el usuario lo hubiera seleccionado.
+
+CORRECCIÓN APLICADA:
+  Misma que BUG 1 (eliminación del slot _linkConnected). MultiVehicleManager
+  solo manda "start" cuando un vehículo se vuelve activo (sea por
+  activación automática del primero o por selección manual del usuario).
+
+BUG 3 — Stop de _linkDisconnected puede no coincidir con el activo  [CORREGIDO]
+─────────────────────────────────────────────────────────────────────────────
+ARCHIVO:  src/Comms/LinkManager.cc  (_linkDisconnected)
+
+DESCRIPCIÓN (histórica):
+  Si se desconectaba el enlace de un vehículo NO activo,
+  _linkDisconnected() mandaba "stop" igualmente. Si era el activo, se
+  apilaba con el stop que también manda _setActiveVehicle() vía la cadena
+  _deleteVehiclePhase2 → _setActiveVehicle(siguiente).
+
+CORRECCIÓN APLICADA:
+  Se eliminó el bloque de POST de _linkDisconnected (todo el cálculo de
+  IP y la llamada HTTP). El slot conserva su responsabilidad original de
+  limpieza (desconectar señales del link, liberar canal MAVLink, eliminar
+  el link de _rgLinks).
+
+  El stop sigue enviándose, pero ahora EXCLUSIVAMENTE desde
+  MultiVehicleManager::_setActiveVehicle(), que:
+    - Es invocado por _deleteVehiclePhase2 cuando se elimina un vehículo.
+    - Sabe exactamente qué IP era la del vehículo activo (_previousOnboardIp).
+    - Si quedan más vehículos, manda stop al anterior y start al nuevo.
+    - Si no quedan, solo manda stop.
+
+DETALLE DEL CAMBIO:
+  src/Comms/LinkManager.h:
+    - Eliminada la declaración del slot _linkConnected.
+    - Conservada la declaración de _linkDisconnected (solo limpieza ya).
+
+  src/Comms/LinkManager.cc:
+    - Eliminados los #include <QtNetwork/...> (ya no se hacen POSTs).
+    - Eliminados el connect/disconnect de LinkInterface::connected → _linkConnected.
+    - Eliminada por completo la función _linkConnected.
+    - Reducida _linkDisconnected a solo la limpieza (sin POST).
+
+
+──────────────────────────────────────────────────────────────────────────────
+7. DIAGRAMA DE CLASES Y RELACIONES
+──────────────────────────────────────────────────────────────────────────────
+
+  QGC (Qt/QML Application)
+  │
+  ├── LinkManager                    [src/Comms/LinkManager.cc]
+  │     ├── _rgLinks: [UDPLink, TCPLink, ...]
+  │     └── _linkDisconnected()      → SOLO limpieza (sin POST tras v2)
+  │
+  ├── MultiVehicleManager            [src/Vehicle/MultiVehicleManager.cc]
+  │     ├── _vehicles: [Vehicle, Vehicle, ...]
+  │     ├── _activeVehicle
+  │     ├── _previousOnboardIp
+  │     ├── _networkManager          (QNetworkAccessManager reutilizado)
+  │     ├── _setActiveVehicle()      → POST /stream stop(anterior) + start(nuevo)
+  │     ├── _getVehicleOnboardIp()   → deriva 192.168.X.163
+  │     ├── _getVehicleLinkIp()      → sourceAddressForSysid() o fallback
+  │     └── _sendStreamCommand()     → POST HTTP
+  │
+  ├── UDPLink                        [src/Comms/UDPLink.cc]
+  │     └── _sysidToAddress: {sysid → QHostAddress}
+  │           (se rellena al llegar cada datagrama MAVLink)
+  │
+  ├── TouchEventUdpSender            [src/Comms/TouchEventUdpSender.cc]
+  │     ├── _targetAddress           (192.168.X.163)
+  │     ├── _targetPort = 12345
+  │     └── sendEvent()              → QUdpSocket::writeDatagram()
+  │
+  └── BackupDownloader               [src/Comms/BackupDownloader.cc]
+        ├── SSE → GET /events
+        ├── downloadPoisNow()        → GET /api/pois
+        └── downloadAllZipsNow()     → GET /api/maps → GET /<zip>
+
+  [ORDENADOR DE ABORDO UGV — 192.168.X.163]
+  │
+  └── GestorComunicacionUGV.py      [FastAPI en :8000]
+        ├── POST /stream             → switch_stream_to(client_ip)
+        │     ├── stop_stream()
+        │     ├── start_stream()     → GStreamer UDP:5600
+        │     ├── update_pixhawk_destination()  → POST HTTP al módulo radio
+        │     └── send_px4_reboot()  → ros2 topic pub VehicleCommand(246)
+        ├── POST /set_ip
+        ├── GET  /status
+        └── POST /reboot_px4
+
+
+──────────────────────────────────────────────────────────────────────────────
+8. PUERTOS Y PROTOCOLOS RESUMEN
+──────────────────────────────────────────────────────────────────────────────
+
+  Puerto     Protocolo   Dirección              Uso
+  ─────────  ─────────   ─────────────────────  ──────────────────────────────
+  8000       TCP/HTTP    Tablet → UGV .163      Control del gestor (start/stop)
+  5600       UDP/RTP     UGV .163 → Tablet      Stream de vídeo (H265/H264)
+  14550(*)   UDP/MAVLink UGV .7   → Tablet      Telemetría MAVLink
+  8234       UDP         UGV .7   ↔ Tablet      Reenvío módulo radio (RFD900x)
+  12345      UDP/JSON    Tablet → UGV .163      Eventos táctiles
+
+  (*) Puerto estándar MAVLink, configurable en QGC.
+
+
+──────────────────────────────────────────────────────────────────────────────
+9. ARCHIVOS RELEVANTES ÍNDICE RÁPIDO
+──────────────────────────────────────────────────────────────────────────────
+
+  src/Comms/LinkManager.cc
+    _linkDisconnected()     línea ~217   Limpieza del link al desconectar
+                                          (POST stop ya NO se hace aquí — está en
+                                           MultiVehicleManager::_setActiveVehicle)
+
+  src/Comms/UDPLink.cc
+    _sysidToAddress insert  línea ~486   Mapeo sysid→IP por datagrama entrante
+    sourceAddressForSysid() línea ~293   Consulta del mapa sysid→IP
+
+  src/Vehicle/MultiVehicleManager.cc
+    _vehicleHeartbeatInfo() línea ~82    Detección y creación de vehículos
+    _setActiveVehicle()     línea ~390   Control start/stop al cambiar vehículo
+    _sendStreamCommand()    línea ~425   HTTP POST al GestorComunicacionUGV
+    _getVehicleOnboardIp()  línea ~462   Derivación de IP .163 desde link IP
+    _getVehicleLinkIp()     línea ~480   Obtención de IP del enlace del vehículo
+
+  src/Vehicle/MultiVehicleManager.h
+    kOnboardComputerLastOctet = 163      línea ~105
+
+  src/Comms/TouchEventUdpSender.cc
+    _updateTargetFromVehicle()           Actualización de IP destino
+    sendEvent()                          Envío UDP de eventos táctiles
+
+  src/Comms/BackupDownloader.cc
+    _connectSse()                        Conexión SSE al servidor de backup
+    _processSseData()                    Procesamiento de eventos SSE
+    downloadPoisNow()                    Descarga de POIs
+    downloadAllZipsNow()                 Descarga de ZIPs de mapas
+
+  src/FlightDisplay/FlyViewWidgetLayer.qml  línea ~60   TouchEventUdpSender en QML
+  src/FlightDisplay/FlyViewVideo.qml        línea ~27   TouchEventUdpSender en QML
+
+  UGV-UME/Workspaces/AUTO/GestorComunicacionUGV.py
+    update_pixhawk_destination()   línea ~78   POST al panel web del módulo radio
+    start_stream()                 línea ~237  Inicio de pipeline GStreamer
+    switch_stream_to()             línea ~261  Coordinación stop+start+radio+reboot
+    /stream endpoint               línea ~322  Endpoint principal de control
+    auto_start()                   línea ~310  Arranque automático tras 15s
+
+
+================================================================================
+  FIN DEL DOCUMENTO
+================================================================================

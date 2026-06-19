@@ -12,6 +12,7 @@
 #include <QObject>
 #include <QUdpSocket>
 #include <QHostAddress>
+#include <QTimer>
 #include <QtQmlIntegration/QtQmlIntegration>
 
 class Vehicle;
@@ -23,6 +24,9 @@ class TouchEventUdpSender : public QObject
 {
     Q_OBJECT
     QML_ELEMENT
+
+    Q_PROPERTY(QString targetAddress READ targetAddress NOTIFY targetAddressChanged)
+    Q_PROPERTY(bool targetResolved READ targetResolved NOTIFY targetResolvedChanged)
 
 public:
     explicit TouchEventUdpSender(QObject* parent = nullptr);
@@ -68,9 +72,22 @@ public:
     /// @brief Obtiene el puerto actual
     Q_INVOKABLE quint16 targetPort() const { return _targetPort; }
 
+    /// @brief true si la IP destino se derivó del vehículo activo (no es la IP por defecto)
+    bool targetResolved() const { return _targetResolved; }
+
+signals:
+    /// @brief Emitido cuando cambia la dirección IP destino (al cambiar el vehículo activo)
+    void targetAddressChanged();
+
+    /// @brief Emitido cuando cambia el estado de resolución de la IP destino
+    void targetResolvedChanged();
+
 private slots:
     /// @brief Actualiza la IP destino cuando cambia el vehículo activo
     void _onActiveVehicleChanged(Vehicle* vehicle);
+
+    /// @brief Reacciona a cambios de la IP configurada en los ajustes
+    void _onConfiguredAddressChanged();
 
 private:
     /// @brief Envía un mensaje UDP con el evento
@@ -89,11 +106,26 @@ private:
     /// @brief Actualiza la IP destino basada en el vehículo
     void _updateTargetFromVehicle(Vehicle* vehicle);
 
+    /// @brief Actualiza _targetResolved y emite la señal si cambia
+    void _setTargetResolved(bool resolved);
+
+    /// @brief Intenta (re)resolver la IP destino desde el vehículo activo.
+    /// Llamado periódicamente por _resolveTimer y bajo demanda al enviar un evento.
+    void _tryResolveTarget();
+
+    /// @brief Aplica la IP configurada en ajustes. Si es válida, se usa siempre
+    /// (modo fijo); si está vacía/inválida, se deriva del vehículo activo.
+    void _applyConfiguredAddress();
+
     QUdpSocket*     _udpSocket;
     QHostAddress    _targetAddress;
     quint16         _targetPort;
+    bool            _targetResolved = false;
+    bool            _fixedAddressMode = false;  // true: usar IP fija de ajustes; false: derivar del vehículo
     qint64          _lastMovementTimestamp;
     int             _throttleInterval;  // Intervalo mínimo entre eventos de movimiento en ms
+    QTimer*         _resolveTimer = nullptr;  // Reintenta resolver la IP destino periódicamente (modo derivación)
 
     static constexpr int kOnboardComputerLastOctet = 163; ///< Last octet of onboard computer IP (192.168.X.163)
+    static constexpr int kResolveRetryIntervalMs = 2000;   ///< Intervalo de reintento de resolución de IP destino
 };

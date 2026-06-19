@@ -412,11 +412,22 @@ void MultiVehicleManager::_setActiveVehicle(Vehicle *vehicle)
                     _sendStreamCommand(onboardIp, "start");
                 });
             }
+            // Exponer la IP del ordenador de abordo a QML (p.ej. para los backups)
+            _setActiveVehicleOnboardIp(newOnboardIp);
         } else {
             _previousActiveVehicleId = -1;
+            _setActiveVehicleOnboardIp(QString());
         }
 
         emit activeVehicleChanged(vehicle);
+    }
+}
+
+void MultiVehicleManager::_setActiveVehicleOnboardIp(const QString &ip)
+{
+    if (_activeVehicleOnboardIp != ip) {
+        _activeVehicleOnboardIp = ip;
+        emit activeVehicleOnboardIpChanged();
     }
 }
 

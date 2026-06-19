@@ -37,6 +37,7 @@ SettingsPage {
     property Fact   _maxGoToLocationDistance:               _flyViewSettings.maxGoToLocationDistance
     property Fact   _forwardFlightGoToLocationLoiterRad:    _flyViewSettings.forwardFlightGoToLocationLoiterRad
     property Fact   _goToLocationRequiresConfirmInGuided:   _flyViewSettings.goToLocationRequiresConfirmInGuided
+    property Fact   _onboardComputerTouchAddress:           _flyViewSettings.onboardComputerTouchAddress
     property var    _viewer3DSettings:                      _settingsManager.viewer3DSettings
     property Fact   _viewer3DEnabled:                       _viewer3DSettings.enabled
     property Fact   _viewer3DOsmFilePath:                   _viewer3DSettings.osmFilePath
@@ -109,6 +110,20 @@ SettingsPage {
             fact:               _updateHomePosition
             visible:            _updateHomePosition.visible
             property Fact _updateHomePosition: _flyViewSettings.updateHomePosition
+        }
+    }
+
+    SettingsGroupLayout {
+        Layout.fillWidth:   true
+        heading:            qsTr("Onboard Computer (Video Touch)")
+        headingDescription: qsTr("IP address of the onboard computer that receives video touch events over UDP (port 12345). Leave empty to derive it automatically from the active vehicle.")
+        visible:            _onboardComputerTouchAddress.visible
+
+        LabelledFactTextField {
+            Layout.fillWidth:   true
+            label:              qsTr("Touch Target IP")
+            fact:               _onboardComputerTouchAddress
+            visible:            fact.visible
         }
     }
 

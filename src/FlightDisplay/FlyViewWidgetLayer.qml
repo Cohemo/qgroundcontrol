@@ -55,6 +55,31 @@ Item {
 
 //Modificado
 
+    // Los backups (SSE) siguen al ordenador de abordo del vehículo activo
+    // (192.168.X.163). La IP la calcula MultiVehicleManager (la misma que usa
+    // para el stream de vídeo), así que la leemos de ahí en vez de derivarla aparte.
+    Connections {
+        target: QGroundControl.multiVehicleManager
+        function onActiveVehicleChanged() { _root._syncBackupServerUrl() }
+        function onActiveVehicleOnboardIpChanged() { _root._syncBackupServerUrl() }
+    }
+
+    function _syncBackupServerUrl() {
+        // Solo arrancamos SSE con una IP resuelta del vehículo activo. Sin vehículo,
+        // o si no se pudo resolver la IP, paramos para no reconectar en bucle a un
+        // servidor inalcanzable.
+        var ip = QGroundControl.multiVehicleManager.activeVehicleOnboardIp
+        if (QGroundControl.multiVehicleManager.activeVehicle && ip.length > 0) {
+            BackupDownloader.serverUrl = "http://" + ip + ":8080"
+            BackupDownloader.start()
+        } else {
+            BackupDownloader.serverUrl = ""
+            BackupDownloader.stop()
+        }
+    }
+
+    Component.onCompleted: _syncBackupServerUrl()
+
     QGCToolInsets {
         id:                     _totalToolInsets
         leftEdgeTopInset:       toolStrip.visible ? toolStrip.leftEdgeTopInset : 0

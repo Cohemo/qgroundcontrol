@@ -113,6 +113,13 @@ Rectangle {
         spacing:                ScreenTools.defaultFontPixelWidth / 2
 
         QGCButton {
+            id:                 dashboardButton
+            text:               qsTr("Dashboard")
+            onClicked:          BackupDownloader.openDashboardInBrowser()
+            enabled:            BackupDownloader.serverUrl.length > 0
+        }
+
+        QGCButton {
             id:                 swapViewButton
             text:               qsTr("GPS/Interfaz")
             onClicked:          swapViews()

@@ -14,6 +14,9 @@
 #include "LinkInterface.h"
 #include "UDPLink.h"
 #include "TCPLink.h"
+#include "SettingsManager.h"
+#include "FlyViewSettings.h"
+#include "Fact.h"
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QDateTime>
@@ -34,12 +37,25 @@ TouchEventUdpSender::TouchEventUdpSender(QObject* parent)
     if (multiVehicleMgr) {
         connect(multiVehicleMgr, &MultiVehicleManager::activeVehicleChanged,
                 this, &TouchEventUdpSender::_onActiveVehicleChanged);
-
-        // Actualizar con el vehículo activo actual si existe
-        if (multiVehicleMgr->activeVehicle()) {
-            _updateTargetFromVehicle(multiVehicleMgr->activeVehicle());
-        }
     }
+
+    // Timer de reintento: re-resuelve la IP destino periódicamente (solo activo
+    // en modo derivación). Cubre el caso en que el mapa sysid->IP todavía no está
+    // poblado cuando el vehículo pasa a activo (los primeros heartbeats aún no han
+    // llegado), y también re-resuelve tras una reconexión o un cambio de IP.
+    _resolveTimer = new QTimer(this);
+    _resolveTimer->setInterval(kResolveRetryIntervalMs);
+    connect(_resolveTimer, &QTimer::timeout, this, &TouchEventUdpSender::_tryResolveTarget);
+
+    // Reaccionar a cambios de la IP configurada en los ajustes
+    SettingsManager* settingsMgr = SettingsManager::instance();
+    if (settingsMgr && settingsMgr->flyViewSettings()) {
+        connect(settingsMgr->flyViewSettings()->onboardComputerTouchAddress(), &Fact::rawValueChanged,
+                this, &TouchEventUdpSender::_onConfiguredAddressChanged);
+    }
+
+    // Estado inicial: IP fija si está configurada en ajustes, si no derivar del vehículo
+    _applyConfiguredAddress();
 }
 
 TouchEventUdpSender::~TouchEventUdpSender()
@@ -83,8 +99,18 @@ void TouchEventUdpSender::setThrottleInterval(int interval)
 
 void TouchEventUdpSender::setTarget(const QString& address, quint16 port)
 {
+    // Un target explícito tiene prioridad: fija la IP y desactiva la derivación
+    // del vehículo para que el timer de reintento no la sobreescriba.
+    _fixedAddressMode = true;
+    if (_resolveTimer) {
+        _resolveTimer->stop();
+    }
+
+    const QString old = _targetAddress.toString();
     _targetAddress = QHostAddress(address);
     _targetPort = port;
+    if (_targetAddress.toString() != old) emit targetAddressChanged();
+    _setTargetResolved(true);
 }
 
 bool TouchEventUdpSender::shouldThrottle()
@@ -105,6 +131,13 @@ void TouchEventUdpSender::sendEvent(const QString& eventType, double x, double y
     // Validar que el socket esté disponible
     if (!_udpSocket) {
         return;
+    }
+
+    // Si la IP del vehículo todavía no se ha resuelto, intentar resolverla ahora
+    // mismo (p.ej. el primer toque justo tras conectar, antes de que salte el
+    // timer de reintento) para no enviar a la IP por defecto.
+    if (!_targetResolved) {
+        _tryResolveTarget();
     }
 
     // Crear un objeto JSON con la información del evento
@@ -134,27 +167,78 @@ void TouchEventUdpSender::sendEvent(const QString& eventType, double x, double y
 
 void TouchEventUdpSender::_onActiveVehicleChanged(Vehicle* vehicle)
 {
+    // En modo IP fija el vehículo no influye en la dirección destino
+    if (_fixedAddressMode) {
+        return;
+    }
     _updateTargetFromVehicle(vehicle);
+}
+
+void TouchEventUdpSender::_onConfiguredAddressChanged()
+{
+    _applyConfiguredAddress();
+}
+
+void TouchEventUdpSender::_applyConfiguredAddress()
+{
+    SettingsManager* settingsMgr = SettingsManager::instance();
+    QString configured;
+    if (settingsMgr && settingsMgr->flyViewSettings()) {
+        configured = settingsMgr->flyViewSettings()->onboardComputerTouchAddress()->rawValue().toString().trimmed();
+    }
+
+    const QHostAddress configuredAddr(configured);
+    if (!configured.isEmpty() && !configuredAddr.isNull()) {
+        // IP fija configurada: se usa siempre, ignorando la derivación del vehículo
+        _fixedAddressMode = true;
+        if (_resolveTimer) {
+            _resolveTimer->stop();
+        }
+
+        const QString old = _targetAddress.toString();
+        _targetAddress = configuredAddr;
+        if (_targetAddress.toString() != old) {
+            emit targetAddressChanged();
+        }
+        _setTargetResolved(true);
+
+        qDebug() << "TouchEventUdpSender: Using configured fixed target IP:" << configured;
+    } else {
+        // Campo vacío o inválido: derivar la IP del vehículo activo (con reintento)
+        _fixedAddressMode = false;
+        if (_resolveTimer && !_resolveTimer->isActive()) {
+            _resolveTimer->start();
+        }
+        _tryResolveTarget();
+    }
 }
 
 void TouchEventUdpSender::_updateTargetFromVehicle(Vehicle* vehicle)
 {
     if (!vehicle) {
         // Sin vehículo activo, mantener IP por defecto
+        _setTargetResolved(false);
         return;
     }
 
     // Obtener la IP del enlace del vehículo (PX4)
     const QString vehicleLinkIp = _getVehicleLinkIp(vehicle);
     if (vehicleLinkIp.isEmpty()) {
-        qWarning() << "TouchEventUdpSender: Could not get link IP for vehicle:" << vehicle->id();
+        // Solo logueamos en la transición a no-resuelto para evitar spam del timer
+        if (_targetResolved) {
+            qWarning() << "TouchEventUdpSender: Could not get link IP for vehicle:" << vehicle->id();
+        }
+        _setTargetResolved(false);
         return;
     }
 
     // Extraer subnet (primeros 3 octetos) de la IP del vehículo
     const QStringList ipParts = vehicleLinkIp.split('.');
     if (ipParts.size() < 3) {
-        qWarning() << "TouchEventUdpSender: Invalid IP format:" << vehicleLinkIp;
+        if (_targetResolved) {
+            qWarning() << "TouchEventUdpSender: Invalid IP format:" << vehicleLinkIp;
+        }
+        _setTargetResolved(false);
         return;
     }
 
@@ -166,10 +250,43 @@ void TouchEventUdpSender::_updateTargetFromVehicle(Vehicle* vehicle)
                                   .arg(kOnboardComputerLastOctet);
 
     // Actualizar la dirección destino
+    const QString old = _targetAddress.toString();
+    const bool changed = (onboardIp != old);
     _targetAddress = QHostAddress(onboardIp);
+    if (changed) emit targetAddressChanged();
+    const bool wasResolved = _targetResolved;
+    _setTargetResolved(true);
 
-    qDebug() << "TouchEventUdpSender: Target updated for vehicle" << vehicle->id()
-             << "-> IP:" << onboardIp << "Port:" << _targetPort;
+    // Solo logueamos cuando algo cambia, para no inundar el log con el timer
+    if (changed || !wasResolved) {
+        qDebug() << "TouchEventUdpSender: Target updated for vehicle" << vehicle->id()
+                 << "-> IP:" << onboardIp << "Port:" << _targetPort;
+    }
+}
+
+void TouchEventUdpSender::_setTargetResolved(bool resolved)
+{
+    if (_targetResolved != resolved) {
+        _targetResolved = resolved;
+        emit targetResolvedChanged();
+    }
+}
+
+void TouchEventUdpSender::_tryResolveTarget()
+{
+    // En modo IP fija no se deriva nada del vehículo
+    if (_fixedAddressMode) {
+        return;
+    }
+
+    MultiVehicleManager* multiVehicleMgr = MultiVehicleManager::instance();
+    if (!multiVehicleMgr) {
+        return;
+    }
+
+    // _updateTargetFromVehicle es idempotente: solo emite señales si algo cambia,
+    // así que es seguro llamarlo periódicamente. Con vehículo nulo marca no resuelto.
+    _updateTargetFromVehicle(multiVehicleMgr->activeVehicle());
 }
 
 QString TouchEventUdpSender::_getVehicleLinkIp(Vehicle* vehicle) const

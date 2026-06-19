@@ -39,6 +39,7 @@ class MultiVehicleManager : public QObject
     Q_PROPERTY(QmlObjectListModel   *vehicles                       READ vehicles                                                           CONSTANT)
     Q_PROPERTY(QmlObjectListModel   *selectedVehicles               READ selectedVehicles                                                   CONSTANT)
     Q_PROPERTY(Vehicle              *offlineEditingVehicle          READ offlineEditingVehicle                                              CONSTANT)
+    Q_PROPERTY(QString               activeVehicleOnboardIp         READ activeVehicleOnboardIp                                             NOTIFY activeVehicleOnboardIpChanged)
 
 public:
     explicit MultiVehicleManager(QObject *parent = nullptr);
@@ -58,7 +59,14 @@ public:
     Vehicle *activeVehicle() const { return _activeVehicle; }
     void setActiveVehicle(Vehicle *vehicle);
 
+    /// @brief IP del ordenador de abordo (192.168.X.163) del vehículo activo,
+    /// o cadena vacía si no hay vehículo o no se pudo resolver. La calcula
+    /// _setActiveVehicle (misma IP que se usa para el stream de vídeo).
+    QString activeVehicleOnboardIp() const { return _activeVehicleOnboardIp; }
+
 signals:
+    void activeVehicleOnboardIpChanged();
+
     void vehicleAdded(Vehicle *vehicle);
     void vehicleRemoved(Vehicle *vehicle);
     void activeVehicleAvailableChanged(bool activeVehicleAvailable);
@@ -87,6 +95,7 @@ private:
     void _sendStreamCommand(const QString &onboardIp, const QString &command);
     QString _getVehicleOnboardIp(Vehicle *vehicle) const;
     QString _getVehicleLinkIp(Vehicle *vehicle) const;
+    void _setActiveVehicleOnboardIp(const QString &ip);  ///< Actualiza la IP expuesta y emite la señal si cambia
 
     QTimer *_gcsHeartbeatTimer = nullptr;           ///< Timer to emit heartbeats
     QmlObjectListModel *_vehicles = nullptr;
@@ -99,6 +108,7 @@ private:
     bool _initialized = false;
     int _previousActiveVehicleId = -1;              ///< Previous active vehicle ID for stream control
     QString _previousOnboardIp;                       ///< Previous active vehicle's onboard computer IP
+    QString _activeVehicleOnboardIp;                  ///< Active vehicle's onboard computer IP exposed to QML
     QNetworkAccessManager *_networkManager = nullptr; ///< For HTTP requests to UGV onboard computers
 
     static constexpr int kGCSHeartbeatRateMSecs = 1000;  ///< Heartbeat rate
