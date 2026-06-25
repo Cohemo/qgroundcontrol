@@ -286,7 +286,7 @@ void BackupDownloader::downloadAllZipsNow()
             // El listado incluye last_modified (mtime más reciente del mapa):
             // si ya tenemos esa versión, no gastamos radio en re-descargarla
             const double lastModified = map.value("last_modified").toDouble();
-            if (lastModified > 0.0 && _mapLastModified.value(filename, -1.0) >= lastModified) {
+            if (lastModified > 0.0 && _mapLastModified.value(_versionKey(filename), -1.0) >= lastModified) {
                 skipped++;
                 continue;
             }
@@ -342,7 +342,7 @@ void BackupDownloader::_startNextDownload()
 
     // Si el servidor soporta If-Modified-Since responderá 304 y nos ahorramos
     // re-descargar mapas que no han cambiado; si lo ignora, simplemente llega un 200
-    const QByteArray lastModified = _lastModified.value(next.filename);
+    const QByteArray lastModified = _lastModified.value(_versionKey(next.filename));
     if (!lastModified.isEmpty()) {
         request.setRawHeader("If-Modified-Since", lastModified);
     }
@@ -387,12 +387,13 @@ void BackupDownloader::_onFileFinished()
         if (QFile::rename(_fileFinalPath + ".part", _fileFinalPath)) {
             const QByteArray lastModified = reply->rawHeader("Last-Modified");
             if (!lastModified.isEmpty()) {
-                _lastModified.insert(filename, lastModified);
+                _lastModified.insert(_versionKey(filename), lastModified);
             }
             // Registrar (y persistir) qué versión tenemos, solo tras éxito:
-            // una descarga fallida debe reintentarse en la siguiente pasada
+            // una descarga fallida debe reintentarse en la siguiente pasada.
+            // La clave va cualificada por UGV para no cruzar versiones entre vehículos.
             if (_filePendingMtime > 0.0) {
-                _mapLastModified.insert(filename, _filePendingMtime);
+                _mapLastModified.insert(_versionKey(filename), _filePendingMtime);
                 QSettings settings;
                 settings.beginGroup("BackupDownloader");
                 QVariantMap stored;
@@ -459,7 +460,41 @@ QString BackupDownloader::_downloadDir() const
         baseDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     }
 
-    const QString dir = QDir(baseDir).filePath("Mapas Descargados");
+    QString dir = QDir(baseDir).filePath("Mapas Descargados");
+
+    // Subcarpeta por vehículo: cada UGV guarda sus mapas/POIs en su propia carpeta
+    // ("Mapas Descargados/UGV N") para que ficheros con el mismo nombre de distintos
+    // UGV no se pisen entre sí.
+    const QString sub = _vehicleSubdir();
+    if (!sub.isEmpty()) {
+        dir = QDir(dir).filePath(sub);
+    }
+
     QDir().mkpath(dir);
     return dir;
+}
+
+QString BackupDownloader::_vehicleSubdir() const
+{
+    if (_serverUrl.isEmpty()) {
+        return QString();
+    }
+    // _serverUrl es "http://192.168.N.163:8080". El UGV_ID es el 3er octeto MENOS 1
+    // (p.ej. 192.168.2.x → "UGV 1", 192.168.3.x → "UGV 2").
+    const QString host = QUrl(_serverUrl).host();
+    const QStringList parts = host.split('.');
+    if (parts.size() == 4) {
+        bool ok = false;
+        const int octet = parts.at(2).toInt(&ok);
+        if (ok) {
+            return QStringLiteral("UGV %1").arg(octet - 1);
+        }
+    }
+    return QString();
+}
+
+QString BackupDownloader::_versionKey(const QString& filename) const
+{
+    const QString sub = _vehicleSubdir();
+    return sub.isEmpty() ? filename : (sub + '/' + filename);
 }

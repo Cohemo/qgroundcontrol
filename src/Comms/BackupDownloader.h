@@ -79,6 +79,12 @@ private:
     void _abortFileDownloads();
     void _setStatus(const QString& status);
     QString _downloadDir() const;
+    /// @brief Subcarpeta por vehículo derivada de la IP del servidor
+    /// (192.168.N.163 → "UGV N"), o cadena vacía si no se puede determinar.
+    QString _vehicleSubdir() const;
+    /// @brief Clave de control de versiones cualificada por vehículo
+    /// ("UGV N/fichero"), para que el dedup no se cruce entre UGVs.
+    QString _versionKey(const QString& filename) const;
 
     struct PendingDownload {
         QUrl    url;

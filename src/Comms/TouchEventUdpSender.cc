@@ -24,7 +24,7 @@
 TouchEventUdpSender::TouchEventUdpSender(QObject* parent)
     : QObject(parent)
     , _udpSocket(new QUdpSocket(this))
-    , _targetAddress("192.168.168.163")  // IP por defecto, se actualizará con el vehículo activo
+    , _targetAddress("10.0.3.0")  // IP por defecto, se actualizará con el vehículo activo
     , _targetPort(12345)                 // Puerto UDP (cambiar si es necesario)
     , _lastMovementTimestamp(0)
     , _throttleInterval(50)  // Throttling: máximo 20 eventos de movimiento por segundo

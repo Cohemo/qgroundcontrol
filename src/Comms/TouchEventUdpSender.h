@@ -126,6 +126,6 @@ private:
     int             _throttleInterval;  // Intervalo mínimo entre eventos de movimiento en ms
     QTimer*         _resolveTimer = nullptr;  // Reintenta resolver la IP destino periódicamente (modo derivación)
 
-    static constexpr int kOnboardComputerLastOctet = 163; ///< Last octet of onboard computer IP (192.168.X.163)
+    static constexpr int kOnboardComputerLastOctet = 0; ///< Last octet of onboard computer IP (192.168.X.163)
     static constexpr int kResolveRetryIntervalMs = 2000;   ///< Intervalo de reintento de resolución de IP destino
 };
