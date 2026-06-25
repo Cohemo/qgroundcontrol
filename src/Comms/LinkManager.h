@@ -29,6 +29,7 @@ class AutoConnectSettings;
 class LogReplayLink;
 class MAVLinkProtocol;
 class QmlObjectListModel;
+class QNetworkAccessManager;
 class QTimer;
 class SerialLink;
 class UDPConfiguration;
@@ -126,11 +127,15 @@ signals:
     void isBluetoothAvailableChanged();
 
 private slots:
+    void _linkConnected();
     void _linkDisconnected();
     void _communicationError(const QString &title, const QString &error);
 
 private:
     QmlObjectListModel *_qmlLinkConfigurations();
+    /// Al conectar/desconectar el comm link manda POST {"mensaje":"start"|"stop"}
+    /// al ordenador de abordo del UGV (10.0.X.0:8000/stream).
+    void _sendStreamCommand(LinkInterface *link, const QString &command);
     /// If all new connections should be suspended a message is displayed to the user and true is returned;
     bool _connectionsSuspendedMsg() const;
     void _updateAutoConnectLinks();
@@ -155,6 +160,10 @@ private:
 
     QList<SharedLinkInterfacePtr> _rgLinks;
     QList<SharedLinkConfigurationPtr> _rgLinkConfigs;
+
+    QNetworkAccessManager *_streamNetworkManager = nullptr; ///< HTTP POST de start/stop al ordenador de abordo del UGV
+
+    static constexpr int kOnboardComputerLastOctet = 0;  ///< Último octeto de la IP del ordenador de abordo (10.0.X.0)
 
     static constexpr const char *_defaultUDPLinkName = "UDP Link (AutoConnect)";
     static constexpr const char *_mavlinkForwardingLinkName = "MAVLink Forwarding Link";

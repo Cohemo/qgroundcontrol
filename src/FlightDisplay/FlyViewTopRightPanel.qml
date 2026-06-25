@@ -26,7 +26,7 @@ Rectangle {
     height:         Math.max(contentHeight, minimumHeight)
     color:          qgcPal.toolbarBackground
     radius:         ScreenTools.defaultFontPixelHeight / 2
-    visible:        false  // Multi-vehicle panel deshabilitado: el usuario prefiere cambiar de vehículo con el selector del toolbar
+    visible:        !QGroundControl.videoManager.fullScreen && _multipleVehicles && _settingEnableMVPanel
     clip:           true
 
     property bool showWidgets: true

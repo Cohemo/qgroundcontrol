@@ -21,7 +21,6 @@ class LinkInterface;
 class Vehicle;
 class QmlObjectListModel;
 class QTimer;
-class QNetworkAccessManager;
 
 Q_DECLARE_LOGGING_CATEGORY(MultiVehicleManagerLog)
 
@@ -91,8 +90,8 @@ private:
     bool _getParameterReadyVehicleAvailable() const { return _parameterReadyVehicleAvailable; }
     void _setParameterReadyVehicleAvailable(bool parametersReady);
 
-    // UGV Video Stream Control
-    void _sendStreamCommand(const QString &onboardIp, const QString &command);
+    // UGV onboard computer IP (expuesta a QML para backups/touch). El control del
+    // stream de vídeo lo hace LinkManager al conectar/desconectar el comm link.
     QString _getVehicleOnboardIp(Vehicle *vehicle) const;
     QString _getVehicleLinkIp(Vehicle *vehicle) const;
     void _setActiveVehicleOnboardIp(const QString &ip);  ///< Actualiza la IP expuesta y emite la señal si cambia
@@ -106,11 +105,8 @@ private:
     Vehicle *_activeVehicle = nullptr;              ///< Currently active vehicle from a ui perspective
     QList<int> _ignoreVehicleIds;                   ///< List of vehicle id for which we ignore further communication
     bool _initialized = false;
-    int _previousActiveVehicleId = -1;              ///< Previous active vehicle ID for stream control
-    QString _previousOnboardIp;                       ///< Previous active vehicle's onboard computer IP
     QString _activeVehicleOnboardIp;                  ///< Active vehicle's onboard computer IP exposed to QML
-    QNetworkAccessManager *_networkManager = nullptr; ///< For HTTP requests to UGV onboard computers
 
     static constexpr int kGCSHeartbeatRateMSecs = 1000;  ///< Heartbeat rate
-    static constexpr int kOnboardComputerLastOctet = 163; ///< Last octet of onboard computer IP (192.168.X.163)
+    static constexpr int kOnboardComputerLastOctet = 0; ///< Last octet of onboard computer IP (192.168.X.163)
 };

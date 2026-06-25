@@ -51,6 +51,9 @@
 
 #include <QtCore/QApplicationStatic>
 #include <QtCore/QTimer>
+#include <QtNetwork/QNetworkAccessManager>
+#include <QtNetwork/QNetworkReply>
+#include <QtNetwork/QNetworkRequest>
 
 QGC_LOGGING_CATEGORY(LinkManagerLog, "Comms.LinkManager")
 QGC_LOGGING_CATEGORY(LinkManagerVerboseLog, "Comms.LinkManager:verbose")
@@ -162,6 +165,7 @@ bool LinkManager::createConnectedLink(SharedLinkConfigurationPtr &config)
     (void) connect(link.get(), &LinkInterface::communicationError, this, &LinkManager::_communicationError);
     (void) connect(link.get(), &LinkInterface::bytesReceived, MAVLinkProtocol::instance(), &MAVLinkProtocol::receiveBytes);
     (void) connect(link.get(), &LinkInterface::bytesSent, MAVLinkProtocol::instance(), &MAVLinkProtocol::logSentBytes);
+    (void) connect(link.get(), &LinkInterface::connected, this, &LinkManager::_linkConnected);
     (void) connect(link.get(), &LinkInterface::disconnected, this, &LinkManager::_linkDisconnected);
 
     MAVLinkProtocol::instance()->resetMetadataForLink(link.get());
@@ -214,6 +218,18 @@ void LinkManager::disconnectAll()
     }
 }
 
+void LinkManager::_linkConnected()
+{
+    LinkInterface* const link = qobject_cast<LinkInterface*>(sender());
+
+    if (!link || !containsLink(link)) {
+        return;
+    }
+
+    // Al pulsar Connect en el comm link mandamos "start"; al desconectar, "stop".
+    _sendStreamCommand(link, "start");
+}
+
 void LinkManager::_linkDisconnected()
 {
     LinkInterface* const link = qobject_cast<LinkInterface*>(sender());
@@ -222,9 +238,13 @@ void LinkManager::_linkDisconnected()
         return;
     }
 
+    // Al desconectar el comm link mandamos "stop".
+    _sendStreamCommand(link, "stop");
+
     (void) disconnect(link, &LinkInterface::communicationError, qgcApp(), &QGCApplication::showAppMessage);
     (void) disconnect(link, &LinkInterface::bytesReceived, MAVLinkProtocol::instance(), &MAVLinkProtocol::receiveBytes);
     (void) disconnect(link, &LinkInterface::bytesSent, MAVLinkProtocol::instance(), &MAVLinkProtocol::logSentBytes);
+    (void) disconnect(link, &LinkInterface::connected, this, &LinkManager::_linkConnected);
     (void) disconnect(link, &LinkInterface::disconnected, this, &LinkManager::_linkDisconnected);
 
     link->_freeMavlinkChannel();
@@ -236,6 +256,68 @@ void LinkManager::_linkDisconnected()
             return;
         }
     }
+}
+
+void LinkManager::_sendStreamCommand(LinkInterface *link, const QString &command)
+{
+    if (!link) {
+        return;
+    }
+
+    const SharedLinkConfigurationPtr config = link->linkConfiguration();
+    if (!config) {
+        return;
+    }
+
+    // IP del UGV según el tipo de link.
+    QString ipAddress;
+    if (config->type() == LinkConfiguration::TypeUdp) {
+        const UDPConfiguration *const udpConfig = qobject_cast<const UDPConfiguration*>(config.get());
+        if (udpConfig) {
+            const QList<std::shared_ptr<UDPClient>> targets = udpConfig->targetHosts();
+            if (!targets.isEmpty()) {
+                ipAddress = targets.first()->address.toString();
+            }
+        }
+    } else if (config->type() == LinkConfiguration::TypeTcp) {
+        const TCPConfiguration *const tcpConfig = qobject_cast<const TCPConfiguration*>(config.get());
+        if (tcpConfig) {
+            ipAddress = tcpConfig->host();
+        }
+    }
+
+    if (ipAddress.isEmpty()) {
+        qCDebug(LinkManagerLog) << "Stream" << command << "skipped: no IP for link" << config->name();
+        return;
+    }
+
+    const QStringList ipParts = ipAddress.split('.');
+    if (ipParts.size() != 4) {
+        return;
+    }
+    // Ordenador de abordo en 10.0.X.0, puerto 8000.
+    const QString onboardIp = QString("10.0.%1.%2").arg(ipParts[2]).arg(kOnboardComputerLastOctet);
+    const QString url = QString("http://%1:8000/stream").arg(onboardIp);
+
+    if (!_streamNetworkManager) {
+        _streamNetworkManager = new QNetworkAccessManager(this);
+    }
+
+    QNetworkRequest request{QUrl(url)};
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    const QByteArray postData = QStringLiteral("{\"mensaje\":\"%1\"}").arg(command).toUtf8();
+
+    qCDebug(LinkManagerLog) << "Sending stream" << command << "to" << url;
+
+    QNetworkReply *const reply = _streamNetworkManager->post(request, postData);
+    (void) connect(reply, &QNetworkReply::finished, this, [reply, url, command]() {
+        if (reply->error() != QNetworkReply::NoError) {
+            qCWarning(LinkManagerLog) << "Stream" << command << "failed to" << url << ":" << reply->errorString();
+        } else {
+            qCDebug(LinkManagerLog) << "Stream" << command << "ok:" << url;
+        }
+        reply->deleteLater();
+    });
 }
 
 SharedLinkInterfacePtr LinkManager::sharedLinkInterfacePointerForLink(const LinkInterface *link)
