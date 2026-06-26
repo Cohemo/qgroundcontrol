@@ -21,7 +21,6 @@ class LinkInterface;
 class Vehicle;
 class QmlObjectListModel;
 class QTimer;
-class QNetworkAccessManager;
 
 Q_DECLARE_LOGGING_CATEGORY(MultiVehicleManagerLog)
 
@@ -59,9 +58,9 @@ public:
     Vehicle *activeVehicle() const { return _activeVehicle; }
     void setActiveVehicle(Vehicle *vehicle);
 
-    /// @brief IP del ordenador de abordo (192.168.X.163) del vehículo activo,
-    /// o cadena vacía si no hay vehículo o no se pudo resolver. La calcula
-    /// _setActiveVehicle (misma IP que se usa para el stream de vídeo).
+    /// @brief IP del ordenador de abordo (10.0.X.0) del vehículo activo, o cadena
+    /// vacía si no hay vehículo o no se pudo resolver. Es la misma IP que usa
+    /// UgvSelector para el stream; la consumen los backups (puerto 8080).
     QString activeVehicleOnboardIp() const { return _activeVehicleOnboardIp; }
 
 signals:
@@ -91,8 +90,8 @@ private:
     bool _getParameterReadyVehicleAvailable() const { return _parameterReadyVehicleAvailable; }
     void _setParameterReadyVehicleAvailable(bool parametersReady);
 
-    // UGV Video Stream Control
-    void _sendStreamCommand(const QString &onboardIp, const QString &command);
+    // UGV onboard computer IP (expuesta a QML para los backups). El control del
+    // stream (start/stop) lo hace UgvSelector al elegir UGV en la barra.
     QString _getVehicleOnboardIp(Vehicle *vehicle) const;
     QString _getVehicleLinkIp(Vehicle *vehicle) const;
     void _setActiveVehicleOnboardIp(const QString &ip);  ///< Actualiza la IP expuesta y emite la señal si cambia
@@ -106,11 +105,8 @@ private:
     Vehicle *_activeVehicle = nullptr;              ///< Currently active vehicle from a ui perspective
     QList<int> _ignoreVehicleIds;                   ///< List of vehicle id for which we ignore further communication
     bool _initialized = false;
-    int _previousActiveVehicleId = -1;              ///< Previous active vehicle ID for stream control
-    QString _previousOnboardIp;                       ///< Previous active vehicle's onboard computer IP
     QString _activeVehicleOnboardIp;                  ///< Active vehicle's onboard computer IP exposed to QML
-    QNetworkAccessManager *_networkManager = nullptr; ///< For HTTP requests to UGV onboard computers
 
     static constexpr int kGCSHeartbeatRateMSecs = 1000;  ///< Heartbeat rate
-    static constexpr int kOnboardComputerLastOctet = 163; ///< Last octet of onboard computer IP (192.168.X.163)
+    static constexpr int kOnboardComputerLastOctet = 0; ///< Último octeto de la IP del ordenador de abordo (10.0.X.0), igual que el stream/UgvSelector
 };

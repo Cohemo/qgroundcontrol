@@ -20,6 +20,8 @@ target_sources(${CMAKE_PROJECT_NAME}
         TouchEventUdpSender.h
         UDPLink.cc
         UDPLink.h
+        UgvSelector.cc
+        UgvSelector.h
 )
 
 # Add JSON files

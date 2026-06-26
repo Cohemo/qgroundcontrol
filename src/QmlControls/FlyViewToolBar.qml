@@ -26,7 +26,6 @@ Rectangle {
     color:  qgcPal.toolbarBackground
 
     property var    _activeVehicle:     QGroundControl.multiVehicleManager.activeVehicle
-    property bool   _communicationLost: _activeVehicle ? _activeVehicle.vehicleLinkManager.communicationLost : false
     property color  _mainStatusBGColor: "blue"
     property var    swapViews:          function() {}
     property var    toggleWidgets:      function() {}
@@ -78,11 +77,31 @@ Rectangle {
             Layout.preferredHeight: viewButtonRow.height
         }
 
+        // Selector de UGV: sustituye al botón de conexión/desconexión. Al elegir
+        // UGV1/UGV2 (excluyente) arranca su stream y para el del otro, y conecta
+        // el link MAVLink con su PX4. Toda la lógica está en el singleton UgvSelector.
+        QGCComboBox {
+            id:                     ugvSelector
+            Layout.preferredHeight: viewButtonRow.height
+            Layout.preferredWidth:  ScreenTools.defaultFontPixelWidth * 12
+            model:                  [ qsTr("UGV1"), qsTr("UGV2") ]
+            displayText:            currentIndex < 0 ? qsTr("Selecciona UGV") : currentText
+            onActivated:            (index) => UgvSelector.selectUgv(index + 1)
+
+            // Mantener el índice en sincronía con UgvSelector de forma imperativa:
+            // un binding sobre currentIndex se rompería al interactuar el usuario.
+            Component.onCompleted:  currentIndex = UgvSelector.selectedUgv - 1
+            Connections {
+                target: UgvSelector
+                function onSelectedUgvChanged() { ugvSelector.currentIndex = UgvSelector.selectedUgv - 1 }
+            }
+        }
+
         QGCButton {
             id:                 disconnectButton
             text:               qsTr("Desconectar")
-            onClicked:          _activeVehicle.closeVehicle()
-            visible:            _activeVehicle && _communicationLost
+            onClicked:          UgvSelector.disconnectCurrent()
+            visible:            UgvSelector.selectedUgv > 0
         }
 
     }

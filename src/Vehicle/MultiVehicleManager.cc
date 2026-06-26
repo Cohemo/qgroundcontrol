@@ -24,9 +24,6 @@
 #include "UDPLink.h"
 #include "TCPLink.h"
 
-#include <QtNetwork/QNetworkAccessManager>
-#include <QtNetwork/QNetworkRequest>
-#include <QtNetwork/QNetworkReply>
 #ifdef Q_OS_IOS
 #include "MobileScreenMgr.h"
 #elif defined(Q_OS_ANDROID)
@@ -46,7 +43,6 @@ MultiVehicleManager::MultiVehicleManager(QObject *parent)
     , _gcsHeartbeatTimer(new QTimer(this))
     , _vehicles(new QmlObjectListModel(this))
     , _selectedVehicles(new QmlObjectListModel(this))
-    , _networkManager(new QNetworkAccessManager(this))
 {
     qCDebug(MultiVehicleManagerLog) << this;
 
@@ -390,34 +386,13 @@ Vehicle *MultiVehicleManager::getVehicleById(int vehicleId) const
 void MultiVehicleManager::_setActiveVehicle(Vehicle *vehicle)
 {
     if (vehicle != _activeVehicle) {
-        // Stop stream on previous vehicle if any
-        if (!_previousOnboardIp.isEmpty()) {
-            qCDebug(MultiVehicleManagerLog) << "Stopping stream on previous vehicle IP:" << _previousOnboardIp;
-            _sendStreamCommand(_previousOnboardIp, "stop");
-            _previousOnboardIp.clear();
-        }
-
         _activeVehicle = vehicle;
 
-        // Start stream on new vehicle if any
-        if (_activeVehicle) {
-            _previousActiveVehicleId = _activeVehicle->id();
-            const QString newOnboardIp = _getVehicleOnboardIp(_activeVehicle);
-            qCDebug(MultiVehicleManagerLog) << "Starting stream on new vehicle:" << _previousActiveVehicleId << "IP:" << newOnboardIp;
-
-            if (!newOnboardIp.isEmpty()) {
-                _previousOnboardIp = newOnboardIp;
-                // Delay para asegurar que VehicleLinkManager esté inicializado
-                QTimer::singleShot(500, this, [this, onboardIp = newOnboardIp]() {
-                    _sendStreamCommand(onboardIp, "start");
-                });
-            }
-            // Exponer la IP del ordenador de abordo a QML (p.ej. para los backups)
-            _setActiveVehicleOnboardIp(newOnboardIp);
-        } else {
-            _previousActiveVehicleId = -1;
-            _setActiveVehicleOnboardIp(QString());
-        }
+        // Solo exponemos la IP del ordenador de abordo a QML (p.ej. para los
+        // backups). El control del stream (start/stop) lo hace UgvSelector al
+        // elegir UGV en la barra; aquí ya NO se manda nada para no tener dos
+        // dueños mandando start/stop al mismo servidor.
+        _setActiveVehicleOnboardIp(_activeVehicle ? _getVehicleOnboardIp(_activeVehicle) : QString());
 
         emit activeVehicleChanged(vehicle);
     }
@@ -429,40 +404,6 @@ void MultiVehicleManager::_setActiveVehicleOnboardIp(const QString &ip)
         _activeVehicleOnboardIp = ip;
         emit activeVehicleOnboardIpChanged();
     }
-}
-
-void MultiVehicleManager::_sendStreamCommand(const QString &onboardIp, const QString &command)
-{
-    if (onboardIp.isEmpty()) {
-        qCWarning(MultiVehicleManagerLog) << "Cannot send stream command: empty onboard IP";
-        return;
-    }
-
-    // Build HTTP URL: http://192.168.X.163:8000/stream
-    const QString url = QString("http://%1:8000/stream").arg(onboardIp);
-
-    qCDebug(MultiVehicleManagerLog) << "Sending stream command to:" << url;
-
-    QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-
-    // JSON body for POST request
-    const QString postDataStr = QString("{ \"mensaje\":\"%1\"}").arg(command);
-    const QByteArray postData = postDataStr.toUtf8();
-
-    QNetworkReply *reply = _networkManager->post(request, postData);
-
-    // Handle response asynchronously
-    connect(reply, &QNetworkReply::finished, this, [reply, onboardIp, command, url]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            qCDebug(MultiVehicleManagerLog) << "Stream command successful for IP:" << onboardIp
-                                            << "command:" << command;
-        } else {
-            qCWarning(MultiVehicleManagerLog) << "Failed to send stream command to:" << url
-                                              << "error:" << reply->errorString();
-        }
-        reply->deleteLater();
-    });
 }
 
 QString MultiVehicleManager::_getVehicleOnboardIp(Vehicle *vehicle) const
